@@ -230,3 +230,11 @@ def test_realized_vol_matches_the_definition(tmp_path):
     summary = store.read_summary(tmp_path)
     assert summary["rv_20d"].iloc[:20].isna().all()
     assert summary["rv_20d"].iloc[-1] == pytest.approx(np.std(returns[-20:], ddof=1) * np.sqrt(252))
+
+
+def test_standardised_smile_grid_lines_up_expiries():
+    # Flat vol: one standard deviation out is a different strike for each expiry, same IV.
+    day = synthetic_day(forward=1000.0, r=0.05, vol_of_strike=lambda k: 0.2, expiries_days=(10, 90))
+    grid = smile_grid(build_chain(day, "TEST", r=0.05), np.array([-1.0, 0.0, 1.0]), standardised=True)
+    assert grid.shape == (2, 3)
+    np.testing.assert_allclose(grid.to_numpy(), 0.2, rtol=1e-6)

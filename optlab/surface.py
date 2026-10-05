@@ -83,10 +83,21 @@ def daily_summary(chain: pd.DataFrame) -> dict:
     return row
 
 
-def smile_grid(chain: pd.DataFrame, k_grid: np.ndarray) -> pd.DataFrame:
-    """IV on a log-moneyness grid, one row per expiry; NaN where an expiry has no quotes that far out."""
+def smile_grid(chain: pd.DataFrame, grid: np.ndarray, standardised: bool = False) -> pd.DataFrame:
+    """IV on a moneyness grid, one row per expiry; NaN where an expiry has no quotes that far out.
+
+    With standardised=True the grid is in standard deviations, ln(K/F) / (ATM vol * sqrt(T)), so a
+    one-week and a six-month smile cover comparable ground instead of the short one's steep wings
+    dwarfing everything else.
+    """
+    atm = expiry_metrics(chain).set_index("expiry")["atm_iv"] if standardised else None
     out = {}
     for expiry, g in chain.groupby("expiry"):
+        x = g["log_moneyness"]
+        if standardised:
+            if not atm.get(expiry, np.nan) > 0:
+                continue
+            x = x / (atm[expiry] * np.sqrt(g["T"]))
         if len(g) >= 3:
-            out[expiry] = [_interp_inside(k, g["log_moneyness"], g["iv"]) for k in k_grid]
-    return pd.DataFrame.from_dict(out, orient="index", columns=k_grid)
+            out[expiry] = [_interp_inside(v, x, g["iv"]) for v in grid]
+    return pd.DataFrame.from_dict(out, orient="index", columns=grid)

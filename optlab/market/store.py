@@ -22,7 +22,7 @@ def chain_path(root: Path, underlying: str, month: str) -> Path:
     return Path(root) / "chains" / underlying / f"{month}.parquet"
 
 
-def _as_dates(df: pd.DataFrame, *columns) -> pd.DataFrame:
+def as_dates(df: pd.DataFrame, *columns) -> pd.DataFrame:
     for col in columns:
         if col in df:
             df[col] = pd.to_datetime(df[col]).dt.date
@@ -33,7 +33,7 @@ def read_summary(root: Path) -> pd.DataFrame:
     path = Path(root) / SUMMARY
     if not path.exists():
         return pd.DataFrame(columns=["trade_date", "underlying"])
-    return _as_dates(pd.read_parquet(path), "trade_date")
+    return as_dates(pd.read_parquet(path), "trade_date")
 
 
 def ingested_days(root: Path) -> set[date]:
@@ -44,7 +44,7 @@ def read_chain(root: Path, underlying: str, day: date) -> pd.DataFrame:
     path = chain_path(root, underlying, f"{day:%Y-%m}")
     if not path.exists():
         return pd.DataFrame()
-    chain = _as_dates(pd.read_parquet(path), "trade_date", "expiry")
+    chain = as_dates(pd.read_parquet(path), "trade_date", "expiry")
     return chain[chain["trade_date"] == day].reset_index(drop=True)
 
 
@@ -63,7 +63,7 @@ def save(root: Path, chains: list[pd.DataFrame], summary_rows: list[dict]):
             rows = rows.drop(columns="month")
             path = chain_path(root, underlying, month)
             if path.exists():
-                old = _as_dates(pd.read_parquet(path), "trade_date", "expiry")
+                old = as_dates(pd.read_parquet(path), "trade_date", "expiry")
                 rows = pd.concat([old[~old["trade_date"].isin(set(rows["trade_date"]))], rows])
             _write(rows.sort_values(["trade_date", "expiry", "strike"]), path)
 

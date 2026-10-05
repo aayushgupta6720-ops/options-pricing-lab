@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: options-pricing-lab
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    healthCheckPath: /_stcore/health
+    # Deploy only commits that pass CI (.github/workflows/ci.yml).
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      # Streamlit runs each session in its own thread; capping glibc arenas keeps memory
+      # from growing per thread on the 512MB free instance.
+      - key: MALLOC_ARENA_MAX
+        value: "2"
+      # The app reads the dataset from the market-data branch; no NSE calls from Render.
+      - key: MARKET_DATA_URL
+        value: https://raw.githubusercontent.com/aayushgupta6720-ops/options-pricing-lab/market-data
