@@ -116,7 +116,7 @@ def surface(grid: pd.DataFrame, days: np.ndarray, pal: Palette) -> go.Figure:
             xaxis=dict(title="Moneyness (SD)", **axis),
             yaxis=dict(title="Days to expiry", **axis),
             zaxis=dict(title="IV", tickformat=".0%", **axis),
-            camera=dict(eye=dict(x=-1.6, y=-1.6, z=0.9)),
+            camera=dict(eye=dict(x=-1.75, y=-1.75, z=1.0)),
         )
     )
     return style(fig, pal, 520)

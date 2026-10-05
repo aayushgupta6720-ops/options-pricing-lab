@@ -66,7 +66,9 @@ below 1e-10 for any quote worth at least the ₹0.05 tick.
    interpolating in forward delta. Fixed tenors interpolate ATM *total variance* $\sigma^2 T$
    linearly in $T$ (the usual way to avoid calendar arbitrage), with flat extrapolation only within
    14 days of a listed expiry. Realized vol is the annualised standard deviation of the last 20
-   daily log returns.
+   daily log returns, with bonus issues and splits taken out: a move over 15% that comes with a
+   matching lot-size change (RELIANCE's 1:1 bonus halved the price and doubled the lot) counts only
+   as the change in one contract's value.
 
 **Sanity check:** NIFTY's 30-day ATM vol tracks India VIX, sitting a little below it, as expected
 because VIX also prices the put wing.

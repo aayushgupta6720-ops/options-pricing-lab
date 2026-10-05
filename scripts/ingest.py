@@ -30,9 +30,11 @@ PAUSE_SECONDS = 1.0  # between uncached downloads, to stay polite to NSE
 def process_day(day: date, raw, vix: float) -> tuple[list, list[dict]]:
     chains, rows = [], []
     for underlying in config.UNDERLYINGS:
-        spot = raw.loc[raw["underlying"] == underlying, "underlying_price"]
+        rows_for = raw[raw["underlying"] == underlying]
+        spot = rows_for["underlying_price"]
         if spot.empty:
             continue
+        lots = rows_for.loc[rows_for["instrument"] == "option", "lot_size"]
         chain = build_chain(raw, underlying)
         chains.append(chain)
         rows.append(
@@ -40,6 +42,7 @@ def process_day(day: date, raw, vix: float) -> tuple[list, list[dict]]:
                 "trade_date": day,
                 "underlying": underlying,
                 "spot": float(spot.iloc[0]),
+                "lot_size": int(lots.mode().iloc[0]) if len(lots) else None,
                 "india_vix": vix,
                 "r": config.RISK_FREE_RATE,
                 **daily_summary(chain),

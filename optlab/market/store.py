@@ -16,6 +16,9 @@ import pandas as pd
 
 SUMMARY = "summary.parquet"
 REALIZED_WINDOW = 20  # trading days
+# No index or large-cap stock moves this much in a day (|log return|), so a move this big that
+# comes with a matching lot-size change is a bonus issue or split, not a price move.
+CORPORATE_ACTION_MOVE = 0.15
 
 
 def chain_path(root: Path, underlying: str, month: str) -> Path:
@@ -78,12 +81,30 @@ def save(root: Path, chains: list[pd.DataFrame], summary_rows: list[dict]):
         _write(new, root / SUMMARY)
 
 
+def adjusted_log_returns(spot: pd.Series, lot_size: pd.Series | None = None) -> pd.Series:
+    """Daily log returns with bonus issues and splits taken out.
+
+    A 1:1 bonus halves the share price and NSE doubles the lot size, so one contract is worth about
+    the same. On such a day the return is replaced by the change in contract value. Lot-size
+    revisions without a price jump (NSE resizes lots every so often) are left alone.
+    """
+    returns = np.log(spot).diff()
+    if lot_size is None:
+        return returns
+    lot_change = np.log(lot_size.astype(float)).diff()
+    action = (returns.abs() > CORPORATE_ACTION_MOVE) & ((returns + lot_change).abs() < 0.05)
+    return returns.where(~action, returns + lot_change)
+
+
 def with_realized_vol(summary: pd.DataFrame) -> pd.DataFrame:
     """Annualised close-to-close vol of the spot over the trailing window, per underlying."""
     summary = summary.drop(columns="rv_20d", errors="ignore")
-    log_returns = summary.groupby("underlying")["spot"].transform(lambda s: np.log(s).diff())
-    rv = log_returns.groupby(summary["underlying"]).transform(
-        lambda r: r.rolling(REALIZED_WINDOW, min_periods=REALIZED_WINDOW).std()
-    )
-    summary["rv_20d"] = rv * np.sqrt(252)
+    has_lots = "lot_size" in summary
+
+    def realized(g: pd.DataFrame) -> pd.Series:
+        lots = g["lot_size"].ffill().bfill() if has_lots and g["lot_size"].notna().any() else None
+        returns = adjusted_log_returns(g["spot"], lots)
+        return returns.rolling(REALIZED_WINDOW, min_periods=REALIZED_WINDOW).std() * np.sqrt(252)
+
+    summary["rv_20d"] = pd.concat([realized(g) for _, g in summary.groupby("underlying", sort=False)])
     return summary

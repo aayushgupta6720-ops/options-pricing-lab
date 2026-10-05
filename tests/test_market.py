@@ -238,3 +238,27 @@ def test_standardised_smile_grid_lines_up_expiries():
     grid = smile_grid(build_chain(day, "TEST", r=0.05), np.array([-1.0, 0.0, 1.0]), standardised=True)
     assert grid.shape == (2, 3)
     np.testing.assert_allclose(grid.to_numpy(), 0.2, rtol=1e-6)
+
+
+def test_bonus_issue_is_not_a_price_move(tmp_path):
+    # 1:1 bonus on day 25: the price halves and the lot doubles. On day 40 NSE resizes the lot
+    # with no price change. Realized vol should look like the price never jumped.
+    rng = np.random.default_rng(1)
+    returns = rng.normal(0, 0.01, 59)
+    spots = 1000 * np.exp(np.concatenate([[0], np.cumsum(returns)]))
+    lots = np.full(60, 250)
+    spots[25:] /= 2
+    lots[25:] = 500
+    lots[40:] = 400
+    days = [date(2026, 1, 1) + timedelta(days=i) for i in range(60)]
+    rows = [
+        {"trade_date": d, "underlying": "X", "spot": s, "lot_size": int(n)}
+        for d, s, n in zip(days, spots, lots, strict=True)
+    ]
+    store.save(tmp_path, [], rows)
+    rv = store.read_summary(tmp_path)["rv_20d"]
+    expected_last = np.std(returns[-20:], ddof=1) * np.sqrt(252)
+    assert rv.iloc[-1] == pytest.approx(expected_last)
+    assert rv.max() < 0.3  # unadjusted, the halving alone would push it past 300%
+    adjusted = store.adjusted_log_returns(pd.Series(spots), pd.Series(lots))
+    np.testing.assert_allclose(adjusted.iloc[1:], returns, atol=1e-12)
