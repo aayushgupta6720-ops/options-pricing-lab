@@ -4,7 +4,9 @@ Option pricing models built and tested from scratch, applied to real NSE data: a
 volatility surface for NIFTY, BANKNIFTY and RELIANCE, rebuilt from NSE's official end-of-day files
 with a history back to July 2024.
 
-**Live demo:** _coming soon (Render)_
+**Live demo:** https://options-pricing-lab.onrender.com. It runs on Render's free plan, which sleeps
+after 15 minutes idle, so the first visit can take about a minute to wake up. The data updates every
+weekday evening.
 
 ![Volatility surface page](docs/screenshots/surface.png)
 
