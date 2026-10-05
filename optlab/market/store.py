@@ -2,6 +2,8 @@
 
     <root>/summary.parquet                         one row per underlying per trading day
     <root>/chains/<UNDERLYING>/<YYYY-MM>.parquet   that month's implied-vol chains
+    <root>/models/heston.parquet                   one Heston fit per underlying per day
+    <root>/models/sabr.parquet                     one SABR fit per underlying, day and expiry
 
 Writes are idempotent: saving a day replaces any rows already stored for it, so a re-run or a
 backfill over existing data never duplicates anything. In production <root> is a checkout of the
@@ -16,6 +18,8 @@ import numpy as np
 import pandas as pd
 
 SUMMARY = "summary.parquet"
+HESTON_FITS = "models/heston.parquet"
+SABR_FITS = "models/sabr.parquet"
 REALIZED_WINDOW = 20  # trading days
 # No index or large-cap stock moves this much in a day (|log return|), so a move this big that
 # comes with a matching lot-size change is a bonus issue or split, not a price move.
@@ -133,3 +137,25 @@ def with_realized_vol(summary: pd.DataFrame) -> pd.DataFrame:
 
     summary["rv_20d"] = pd.concat([realized(g) for _, g in summary.groupby("underlying", sort=False)])
     return summary
+
+
+def read_table(root: Path, relative: str) -> pd.DataFrame:
+    """A model-fit table (HESTON_FITS, SABR_FITS); empty if it doesn't exist yet."""
+    path = Path(root) / relative
+    if not path.exists():
+        return pd.DataFrame(columns=["trade_date", "underlying"])
+    return as_dates(pd.read_parquet(path), "trade_date", "expiry")
+
+
+def replace_days(root: Path, relative: str, rows: pd.DataFrame, days: set[tuple[date, str]]):
+    """Replace every row stored for the given (trade_date, underlying) pairs with `rows`."""
+    old = read_table(root, relative)
+    if len(old):
+        keys = pd.MultiIndex.from_arrays([old["trade_date"], old["underlying"]])
+        old = old[~keys.isin(list(days))]
+    parts = [p for p in (old, rows) if len(p)]
+    if not parts:
+        return
+    table = pd.concat(parts, ignore_index=True)
+    order = [c for c in ("underlying", "trade_date", "expiry") if c in table]
+    _write(table.sort_values(order).reset_index(drop=True), Path(root) / relative)

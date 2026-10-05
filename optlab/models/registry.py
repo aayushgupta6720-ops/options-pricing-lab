@@ -1,6 +1,8 @@
-"""Every pricing model behind one interface, so pages and tests can loop over them.
+"""The models that price an option from its OptionSpec alone, behind one interface, so pages and
+tests can loop over them.
 
-A new model (Heston, later) becomes available everywhere by adding one entry here.
+Heston needs five more parameters than an OptionSpec carries, so it isn't listed here; it has its
+own page (views/heston.py) with those parameters as inputs.
 """
 
 from collections.abc import Callable

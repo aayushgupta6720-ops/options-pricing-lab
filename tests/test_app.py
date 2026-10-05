@@ -4,7 +4,9 @@ Every test points the remote URL at a closed port, so anything that tried to fet
 instead of the local dataset would fail.
 """
 
+import json
 import shutil
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -14,22 +16,25 @@ import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from optlab.market import nse, store
+from scripts import calibrate
 from scripts.ingest import process_day
 from ui import data
 
 FIXTURES = Path(__file__).parent / "fixtures"
 APP = str(Path(__file__).resolve().parents[1] / "app.py")
-PAGES = ["views/surface.py", "views/history.py", "views/strategy.py", "views/pricer.py", "views/greeks.py",
-         "views/convergence.py"]  # fmt: skip
+PAGES = ["views/surface.py", "views/history.py", "views/strategy.py", "views/models.py", "views/pricer.py",
+         "views/greeks.py", "views/convergence.py", "views/heston.py"]  # fmt: skip
 DAYS = (date(2026, 9, 30), date(2026, 10, 1))
 
 
-def build_dataset(root: Path) -> Path:
+def build_dataset(root: Path, fitted: bool = True) -> Path:
     raw = nse.parse((FIXTURES / "fo_20261001_subset.csv.zip").read_bytes())
     for day in DAYS:
         raw["trade_date"] = day
         chains, rows = process_day(day, raw, 0.1446)
         store.save(root, chains, rows)
+    if fitted:
+        calibrate.main(["--data-dir", str(root)])
     return root
 
 
@@ -42,6 +47,10 @@ def dataset(tmp_path_factory):
 def local_data(dataset, monkeypatch):
     monkeypatch.setattr(data, "LOCAL_DIR", dataset)
     monkeypatch.setattr(data, "REMOTE_URL", "http://127.0.0.1:9")
+    # AppTest swaps sys.modules["__main__"] for the app script and leaves it there. A process pool
+    # started later in the same session (scripts/calibrate.py's tests) would then re-run app.py in
+    # every worker it spawns.
+    monkeypatch.setitem(sys.modules, "__main__", sys.modules["__main__"])
     st.cache_data.clear()
 
 
@@ -162,3 +171,28 @@ def test_local_dataset_never_falls_back_to_github(tmp_path, monkeypatch):
     monkeypatch.setattr(data, "LOCAL_DIR", root)
     assert data.chain("RELIANCE", DAYS[-1]).empty  # missing locally, and not fetched remotely
     assert np.isfinite(data.summary()["spot"]).any()
+
+
+def test_model_page_shows_the_fit_and_both_models():
+    app = open_page("views/models.py")
+    labels = metrics(app)
+    assert float(labels["Fit error"].split()[0]) < 1.5
+    assert float(labels["Spot-vol correlation ρ"].replace("−", "-")) < 0
+    smile = json.loads(app.get("plotly_chart")[0].proto.spec)
+    assert {"Market", "Heston", "SABR"} <= {trace["name"] for trace in smile["data"]}
+
+
+def test_model_page_before_any_fits(tmp_path, monkeypatch):
+    monkeypatch.setattr(data, "LOCAL_DIR", build_dataset(tmp_path / "data", fitted=False))
+    app = open_page("views/models.py")
+    assert any("No model fits" in i.value for i in app.info)
+
+
+def test_heston_page_presets_and_monte_carlo():
+    app = open_page("views/heston.py")
+    fitted = app.session_state["hs_vol0"]
+    app.button(key="hs_load_textbook").click().run()
+    assert not app.exception
+    assert app.session_state["hs_vol0"] == pytest.approx(100 * np.sqrt(0.0175), abs=0.05)
+    assert app.session_state["hs_vol0"] != fitted
+    assert any("containing" in c.value for c in app.caption)

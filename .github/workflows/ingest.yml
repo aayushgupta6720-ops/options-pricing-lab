@@ -59,6 +59,13 @@ jobs:
           DAY: ${{ inputs.date }}
           FORCE: ${{ inputs.force && '1' || '' }}
 
+      # Heston and SABR fits for any day that doesn't have them yet (a few seconds a day).
+      - name: Calibrate
+        id: calibrate
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: python -m scripts.calibrate --data-dir data --workers 2
+
       - name: Save
         if: ${{ !cancelled() }}
         run: |
@@ -73,7 +80,7 @@ jobs:
           git push
 
       - name: Fail the run if any day failed
-        if: steps.ingest.outcome == 'failure'
+        if: steps.ingest.outcome == 'failure' || steps.calibrate.outcome == 'failure'
         run: |
-          echo "Some days failed to ingest; see the Ingest step. The rest were saved."
+          echo "Some days failed to ingest or calibrate; see those steps. The rest were saved."
           exit 1

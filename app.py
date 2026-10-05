@@ -20,16 +20,19 @@ MARKET = [
     st.Page("views/surface.py", title="Volatility surface", icon=":material/landscape:", default=True),
     st.Page("views/history.py", title="Volatility history", icon=":material/timeline:"),
     st.Page("views/strategy.py", title="Strategy payoff", icon=":material/stacked_line_chart:"),
+    st.Page("views/models.py", title="Model vs market", icon=":material/query_stats:"),
 ]
 LAB = [
     st.Page("views/pricer.py", title="Pricer", icon=":material/calculate:"),
     st.Page("views/greeks.py", title="Greeks", icon=":material/function:"),
     st.Page("views/convergence.py", title="Model convergence", icon=":material/insights:"),
+    st.Page("views/heston.py", title="Heston model", icon=":material/waves:"),
 ]
 page = st.navigation({"NSE market": MARKET, "Pricing lab": LAB})
 
 HULL = {"S": 42.0, "K": 40.0, "days": 183, "sigma": 0.20, "r": 0.10, "q": 0.0, "kind": "call"}
 INPUT_KEYS = ("in_S", "in_K", "in_days", "in_sigma", "in_r", "in_q", "in_kind", "in_style")
+INPUT_KEYS += ("hs_vol0", "hs_volbar", "hs_kappa", "hs_xi", "hs_rho", "hs_paths")  # Heston page
 
 for key in INPUT_KEYS:
     if key in st.session_state:

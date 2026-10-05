@@ -151,3 +151,81 @@ def pnl(spots, at_expiry, today, pal: Palette, spot_now: float, breakevens=()) -
     fig.update_xaxes(tickformat=",.0f")
     fig.update_yaxes(tickformat=",.0f")
     return fig
+
+
+def model_smile(quotes: pd.DataFrame, curves: dict, pal: Palette, fitted=None) -> go.Figure:
+    """One expiry: market quotes as dots, each model's smile (name -> (strikes, vols)) as a line.
+
+    `fitted` marks the quotes the models were fitted to; the others are drawn hollow.
+    """
+    fitted = np.ones(len(quotes), dtype=bool) if fitted is None else np.asarray(fitted)
+    fig = go.Figure()
+    for i, (name, (strikes, vols)) in enumerate(curves.items(), start=1):
+        fig.add_trace(
+            go.Scatter(
+                x=strikes,
+                y=vols,
+                name=name,
+                mode="lines",
+                line=dict(color=pal.series[i], width=LINE),
+                hovertemplate=f"Strike %{{x:,.0f}}<br>IV %{{y:.2%}}<extra>{name}</extra>",
+            )
+        )
+    for name, mask, marker in (
+        ("Market", fitted, dict(color=pal.series[0], line=dict(width=0))),
+        (
+            "Market, beyond 5-delta (not fitted)",
+            ~fitted,
+            dict(color="rgba(0,0,0,0)", line=dict(width=1.5, color=pal.series[0])),
+        ),
+    ):
+        q = quotes[mask]
+        if q.empty:
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=q["strike"],
+                y=q["iv"],
+                name=name,
+                mode="markers",
+                marker=dict(size=MARKER, **marker),
+                customdata=np.stack([q["option_type"], q["close"], q["n_trades"]], axis=1),
+                hovertemplate=(
+                    "Strike %{x:,.0f} %{customdata[0]}<br>IV %{y:.2%}<br>Close ₹%{customdata[1]:,.2f} · "
+                    f"%{{customdata[2]:,}} trades<extra>{name}</extra>"
+                ),
+            )
+        )
+    fig.update_xaxes(title_text="Strike", tickformat=",.0f")
+    fig.update_yaxes(title_text="Implied volatility")
+    return style(fig, pal, 400, percent_y=True)
+
+
+def residual_heatmap(
+    table: pd.DataFrame, counts: pd.DataFrame, pal: Palette, limit: float = 0.03
+) -> go.Figure:
+    """Rows are expiries, columns moneyness buckets, cells the mean model-minus-market vol."""
+    n = len(pal.diverging) - 1
+    scale = [[i / n, c] for i, c in enumerate(pal.diverging)]
+    fig = go.Figure(
+        go.Heatmap(
+            z=table.to_numpy(dtype=float),
+            x=list(table.columns),
+            y=list(table.index),
+            customdata=counts.to_numpy(),
+            colorscale=scale,
+            zmin=-limit,
+            zmax=limit,
+            zmid=0,
+            xgap=2,
+            ygap=2,
+            colorbar=dict(title=dict(text="Model − market"), tickformat="+.1%", thickness=12),
+            hovertemplate="%{y}<br>%{x}<br>Model − market: %{z:+.2%}<br>%{customdata} quotes<extra></extra>",
+        )
+    )
+    # Category axis: the bucket labels use a typographic minus, which a numeric axis would drop.
+    fig.update_xaxes(
+        title_text="Moneyness (standard deviations from the forward)", showgrid=False, type="category"
+    )
+    fig.update_yaxes(title_text="Expiry", autorange="reversed", showgrid=False, type="category")
+    return style(fig, pal, max(260, 44 * len(table) + 120))

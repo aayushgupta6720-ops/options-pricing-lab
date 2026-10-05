@@ -22,6 +22,8 @@ class Palette:
     grid: str
     axis: str
     sequential: tuple[str, ...]
+    # Two arms (blue for negative, red for positive) around a neutral gray midpoint.
+    diverging: tuple[str, ...]
 
 
 LIGHT = Palette(
@@ -32,6 +34,7 @@ LIGHT = Palette(
     grid="#e1e0d9",
     axis="#c3c2b7",
     sequential=("#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"),
+    diverging=("#184f95", "#6da7ec", "#f0efec", "#f1a4a3", "#b63a3a"),
 )
 DARK = Palette(
     series=("#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"),
@@ -42,6 +45,7 @@ DARK = Palette(
     axis="#383835",
     # Dark mode runs the same ramp the other way, so "more" is still "more contrast".
     sequential=("#0d366b", "#184f95", "#256abf", "#3987e5", "#6da7ec", "#9ec5f4", "#cde2fb"),
+    diverging=("#86b6ef", "#256abf", "#383835", "#a83a39", "#f08e8d"),
 )
 
 

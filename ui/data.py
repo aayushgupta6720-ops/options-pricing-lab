@@ -22,7 +22,8 @@ import requests
 import streamlit as st
 
 from optlab import config
-from optlab.market.store import SUMMARY, as_dates
+from optlab.market.store import HESTON_FITS, SABR_FITS, SUMMARY, as_dates
+from optlab.models.heston import HestonParams
 
 LOCAL_DIR = Path(os.environ.get("MARKET_DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
 REMOTE_URL = os.environ.get(
@@ -75,6 +76,36 @@ def chain(underlying: str, day: date) -> pd.DataFrame:
     if month.empty:
         return month
     return month[month["trade_date"] == day].reset_index(drop=True)
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False, max_entries=4)
+def _fits(relative: str, version: str) -> pd.DataFrame:
+    df = _read(relative, version)
+    return (
+        pd.DataFrame(columns=["trade_date", "underlying"])
+        if df is None
+        else as_dates(df, "trade_date", "expiry")
+    )
+
+
+def heston_fits(underlying: str) -> pd.DataFrame:
+    """Every successful daily Heston fit for one underlying, oldest first."""
+    fits = _fits(HESTON_FITS, version())
+    if fits.empty:
+        return fits
+    fits = fits[(fits["underlying"] == underlying) & fits["fitted"].astype(bool)]
+    return fits.sort_values("trade_date").reset_index(drop=True)
+
+
+def heston_params(row) -> HestonParams:
+    return HestonParams(row["v0"], row["kappa"], row["theta"], row["xi"], row["rho"])
+
+
+def sabr_fits(underlying: str, day: date) -> pd.DataFrame:
+    fits = _fits(SABR_FITS, version())
+    if fits.empty:
+        return fits
+    return fits[(fits["underlying"] == underlying) & (fits["trade_date"] == day)].reset_index(drop=True)
 
 
 def rows_for(underlying: str) -> pd.DataFrame:

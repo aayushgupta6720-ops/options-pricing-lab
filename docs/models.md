@@ -94,3 +94,60 @@ strike"). The carry rate $b = \ln(F/S)/T$ is held constant, so as time passes th
 towards spot ($F = S e^{b\tau}$); theta includes that roll-down. Max profit and loss come from evaluating the piecewise-linear payoff at each strike and at
 spot 0, so a short put's worst case (spot to zero) isn't missed. Only a net long or short call
 position is unlimited.
+
+## Heston (`optlab/models/heston.py`)
+
+$$\frac{dS}{S} = (r - q)\,dt + \sqrt{v}\,dW_1, \qquad dv = \kappa(\theta - v)\,dt + \xi\sqrt{v}\,dW_2, \qquad d\langle W_1, W_2\rangle = \rho\,dt$$
+
+Variance starts at $v_0$, is pulled towards $\theta$ at speed $\kappa$ (half-life $\ln 2/\kappa$
+years) and fluctuates with vol of vol $\xi$. A negative $\rho$ makes vol rise when the market falls,
+which tilts the smile towards downside strikes; $\xi$ curves it.
+
+**Pricing.** The characteristic function of $X = \ln(S_T/F)$ is $\phi(u) = e^{C(u) + D(u)v_0}$ with,
+in the "little Heston trap" form of Albrecher et al. (2007), which stays on the right branch of the
+complex logarithm,
+
+$$\beta = \kappa - \rho\xi iu, \quad d = \sqrt{\beta^2 + \xi^2(iu + u^2)}, \quad g = \frac{\beta - d}{\beta + d},$$
+$$C = \frac{\kappa\theta}{\xi^2}\Big[(\beta - d)T - 2\ln\frac{1 - ge^{-dT}}{1 - g}\Big], \qquad D = \frac{\beta - d}{\xi^2}\,\frac{1 - e^{-dT}}{1 - ge^{-dT}}.$$
+
+Calls come from Lewis's (2001) single integral, $C = D_r\big[F - \frac{\sqrt{FK}}{\pi}\int_0^\infty
+\mathrm{Re}\big(e^{iux}\phi(u - \tfrac{i}{2})\big)\frac{du}{u^2 + 1/4}\big]$ with $x = \ln(F/K)$, and
+puts from parity. The integral is cut off where the integrand drops below $10^{-12}$ (found by probing:
+for short maturities the integrand decays like a Gaussian, for long ones only exponentially) and done
+with 512-point Gauss–Legendre, once per maturity for all strikes, about 0.4 ms for 120 strikes.
+
+**Checked against:** Fang & Oosterlee's (2008) reference price 5.785155450 (to $10^{-7}$); adaptive
+quadrature from 2 days to 2 years (to $10^{-6}$ rupees on a 22,500 forward); Black-Scholes as
+$\xi \to 0$ (the gap shrinks like $\xi$ with correlation, like $\xi^2$ without, as it should);
+$\phi(-i) = 1$; and a full-truncation Euler Monte Carlo (Lord et al. 2010) within 3 standard errors.
+
+## SABR (`optlab/models/sabr.py`)
+
+$dF = \alpha_t F^\beta dW_1$, $d\alpha_t = \nu\alpha_t dW_2$, $d\langle W_1, W_2\rangle = \rho\,dt$.
+Hagan et al.'s (2002) expansion gives the Black implied vol directly. With $z = \frac{\nu}{\alpha}(FK)^{(1-\beta)/2}\ln\frac{F}{K}$
+and $x(z) = \ln\frac{\sqrt{1 - 2\rho z + z^2} + z - \rho}{1 - \rho}$,
+
+$$\sigma_B = \frac{\alpha}{(FK)^{\frac{1-\beta}{2}}\big[1 + \frac{(1-\beta)^2}{24}\ln^2\frac{F}{K} + \frac{(1-\beta)^4}{1920}\ln^4\frac{F}{K}\big]}\cdot\frac{z}{x(z)}\cdot\Big[1 + \Big(\frac{(1-\beta)^2\alpha^2}{24(FK)^{1-\beta}} + \frac{\rho\beta\nu\alpha}{4(FK)^{(1-\beta)/2}} + \frac{2 - 3\rho^2}{24}\nu^2\Big)T\Big].$$
+
+$z/x(z) \to 1$ at the money, so near it the code uses $1 - \rho z/2$. $\beta$ is fixed at 1 (lognormal),
+which makes $\alpha$ close to the ATM vol: on one day's smile, $\beta$ and $\rho$ are nearly
+interchangeable, so fitting both would be noise.
+
+## Calibration (`optlab/calibration.py`, `scripts/calibrate.py`)
+
+Both fits use only quotes between the 5-delta put and call. Beyond them, options trade at a few ticks
+at vols no diffusion produces, and a handful of them would dominate any fit.
+
+- **SABR**, per expiry with 5+ quotes: least squares on implied vols over $(\alpha, \rho, \nu)$, from
+  four starting points, keeping the best. Median error 0.11–0.22 vol points.
+- **Heston**, per day, on expiries from 7 days to a year: residuals are (model − market price) /
+  market vega, which is the vol error to first order without inverting implied vols inside the
+  optimiser, weighted so each expiry counts equally. Bounded trust-region least squares from three
+  fixed starting points plus the previous day's fit, keeping the best. $\kappa$ is capped at 30 (an
+  8-day half-life): with only a few monthly expiries, the data can't separate faster mean reversion
+  from higher vol of vol, and uncapped fits drift to values like a one-day half-life for small gains.
+  Reported error is the RMSE of the model's implied vols against the market's over the fitted quotes.
+
+Fits run in the daily job after ingest and are stored in `models/heston.parquet` and
+`models/sabr.parquet` on the `market-data` branch; the app only evaluates them, so a 0.1-CPU Render
+instance never has to calibrate anything.
