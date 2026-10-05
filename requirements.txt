@@ -1,0 +1,8 @@
+# Runtime (what Render installs)
+numpy==2.5.3
+scipy==1.18.1
+pandas==3.0.6
+pyarrow==25.0.1
+plotly==7.1.0
+streamlit==1.65.0
+requests==2.34.2
