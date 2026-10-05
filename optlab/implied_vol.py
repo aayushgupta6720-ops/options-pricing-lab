@@ -49,3 +49,21 @@ def implied_vol(price, S, K, T, r, q=0.0, kind="call", tol=1e-10, max_iter=100):
         todo &= (hi - lo) > 1e-14
 
     return np.where(valid, sigma, np.nan)[()]
+
+
+def american_implied_vol(price: float, spec, steps: int = 300) -> float:
+    """Implied vol of an American option from a binomial tree (Brent's method on sigma).
+
+    Slower than the European solver (each evaluation is a tree), so it handles one option at a
+    time. NaN when no vol in [SIGMA_MIN, SIGMA_MAX] reproduces the price.
+    """
+    from scipy.optimize import brentq
+
+    from optlab.models import binomial
+
+    def gap(sigma):
+        return binomial.price_spec(spec.bump(sigma=sigma, style="american"), steps) - price
+
+    if spec.T <= 0 or not np.isfinite(price) or gap(SIGMA_MIN) > 0 or gap(SIGMA_MAX) < 0:
+        return float("nan")
+    return float(brentq(gap, SIGMA_MIN, SIGMA_MAX, xtol=1e-8))

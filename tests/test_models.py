@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from optlab.contracts import OptionSpec
-from optlab.greeks import finite_difference
+from optlab.greeks import binomial_greeks, finite_difference
 from optlab.models import binomial, black_scholes, monte_carlo
 from optlab.models.registry import MODELS, models_for
 
@@ -103,9 +103,41 @@ def test_binomial_zero_vol_american_put_exercises_at_once():
     assert binomial.price(50.0, 100.0, 1.0, 0.05, 0.0, kind="put") == pytest.approx(100 * np.exp(-0.05) - 50)
 
 
-def test_binomial_rejects_too_few_steps_for_the_drift():
-    with pytest.raises(ValueError, match="more steps"):
-        binomial.price(100.0, 100.0, 10.0, 0.30, 0.01, steps=2)
+@pytest.mark.parametrize(
+    "case",
+    [
+        dict(S=42.0, K=40.0, T=0.5, r=0.10, sigma=0.02, steps=10),  # low vol: CRR's p would be 1.06
+        dict(S=100.0, K=100.0, T=10.0, r=0.10, sigma=0.01, steps=1000),  # long-dated, low vol
+    ],
+)
+def test_binomial_falls_back_when_crr_breaks_down(case):
+    steps = case.pop("steps")
+    assert binomial.lattice(case["T"], case["r"], case["sigma"], 0.0, steps).kind == "drift-centred"
+    exact = black_scholes.price(**case)
+    assert binomial.price(**case, steps=steps) == pytest.approx(exact, rel=0.02, abs=0.01)
+    assert binomial.price(**case, steps=2000) == pytest.approx(exact, rel=1e-3, abs=1e-3)
+
+
+def test_tree_gamma_for_an_american_call_matches_black_scholes():
+    # No dividends, so the American call is the European one and has its gamma.
+    spec = OptionSpec(**HULL, style="american")
+    delta, gamma = binomial.tree_delta_gamma(spec, steps=400)
+    assert delta == pytest.approx(black_scholes.delta(**HULL), abs=2e-3)
+    assert gamma == pytest.approx(black_scholes.gamma(**HULL), rel=0.02)
+
+
+def test_tree_greeks_for_an_american_put_are_stable():
+    spec = OptionSpec(**HULL, kind="put", style="american")
+    coarse = binomial_greeks(spec, steps=400)
+    fine = binomial_greeks(spec, steps=3000)
+    for name in ("delta", "gamma", "vega", "theta"):
+        assert coarse[name] == pytest.approx(fine[name], rel=0.03), name
+    assert coarse["gamma"] > 0.05  # the bumped-spot estimate read 0.028 here
+
+
+def test_american_greeks_survive_zero_vol():
+    greeks = binomial_greeks(OptionSpec(**{**HULL, "sigma": 0.0}, kind="put", style="american"), steps=400)
+    assert all(np.isfinite(v) for v in greeks.values())
 
 
 @pytest.mark.parametrize("kind", ["call", "put"])

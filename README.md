@@ -23,14 +23,14 @@ weekday evening.
 
 ## Findings from the data
 
-From 560 trading days, 1 Jul 2024 to 5 Oct 2026, all computed from the published dataset:
+From 562 trading days, 1 Jul 2024 to 5 Oct 2026, all computed from the published dataset:
 
 - **The pipeline tracks India VIX.** NIFTY's 30-day ATM vol has a 0.975 correlation with India VIX.
   VIX sits above it on 95% of days, by about 1 point. That's expected: VIX averages over the whole
   strip of strikes, including the expensive put wing.
 - **Implied vol usually overprices what follows.** 30-day ATM vol exceeded the next 20 days'
-  realized vol on 68% of days for NIFTY (median gap +1.4 points), 66% for BANKNIFTY (+1.6) and 58%
-  for RELIANCE (+0.7): the variance risk premium that option sellers collect.
+  realized vol on 67% of days for NIFTY (median gap +1.4 points), 67% for BANKNIFTY (+1.6) and 56%
+  for RELIANCE (+0.65): the variance risk premium that option sellers collect.
 - **Index puts carry more crash premium than single-stock puts.** NIFTY's 25-delta skew averaged
   2.2 vol points against 1.2 for RELIANCE.
 - **Stress inverts the term structure.** On the 10% of days with the highest NIFTY 30-day vol, 90-day
@@ -60,27 +60,37 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
 - **`optlab/`** is a plain Python library with no Streamlit in it: the pricing models
   (`models/`), implied vol, finite-difference Greeks, the NSE pipeline (`market/`) and strategy maths.
 - **`scripts/ingest.py`** adds trading days to the dataset. It's idempotent, skips holidays, and
-  looks back 10 days so a missed day gets filled in by the next run.
+  looks back 10 days so a missed day gets filled in by the next run. It tries every calendar date,
+  because NSE occasionally trades on a weekend (Budget day 2025 was a Saturday). One failing day
+  doesn't stop the others; the run reports it and exits non-zero.
+- **`scripts/rebuild_summary.py`** recomputes the daily summary from the stored quotes after a
+  change to how it's derived, without downloading anything.
 - **`.github/workflows/ingest.yml`** runs it every weekday evening and commits to the
   `market-data` branch. The app reads that branch, so it never calls NSE itself.
 - The maths, and what each piece is checked against, is in [docs/models.md](docs/models.md).
 
 ## Testing
 
-71 tests run in CI (`ruff` + `pytest`, about 2 seconds, no network):
+107 tests run in CI (`ruff` + `pytest`, about 6 seconds, no network):
 
 - **Models:** Hull's textbook values for prices, Greeks and the 5-step American put; put-call
-  parity; tree → Black-Scholes convergence; Monte Carlo within 3 standard errors; analytic vs
-  finite-difference Greeks.
+  parity; tree → Black-Scholes convergence, including the low-vol cases where the tree switches
+  lattice; tree delta and gamma against Black-Scholes and a fine tree; Monte Carlo within 3
+  standard errors; analytic vs finite-difference Greeks; American implied vol round trips.
 - **Implied vol:** round trips over a grid of strikes, maturities and vols; NaN outside
   no-arbitrage bounds.
-- **Pipeline:** parsing a real (trimmed) bhavcopy; parity forwards within 10 bp of the futures;
-  recovering a known smile from synthetic prices; idempotent storage; realized vol against its
-  definition, including across a bonus issue and a lot-size revision.
+- **Pipeline:** parsing a real (trimmed) bhavcopy; NSE's HTTP handling (404 skip, 403 fail-fast,
+  429/5xx retry, HTML-instead-of-zip); parity forwards within 10 bp of the futures; recovering a
+  known smile from synthetic prices; the ATM gap gate and order-independent 25-delta vols;
+  idempotent storage; realized vol across a bonus issue and a lot-size revision; ingest with
+  weekend sessions, a failing day mid-run, a newly added underlying, VIX retries and month flushes.
 - **Strategies:** breakevens, bounded vs unlimited P&L (including a short put's spot-to-zero case),
-  and that an iron condor collects a credit.
-- **App:** every page renders without an exception (Streamlit AppTest), and the pricer reproduces
-  the NSE close at the market's implied vol.
+  that an iron condor collects a credit, and theta (with the forward rolling down) against the
+  value a moment later.
+- **App:** every page renders (Streamlit AppTest), plus regressions for state and edge cases:
+  sidebar inputs surviving a trip to a market page, per-underlying strategy widths, low-vol and
+  American inputs, a missing latest chain, an underlying with no data, and working offline. The
+  tests point the data URL at a closed port, so they can't quietly fetch from GitHub.
 
 ## Quick start
 

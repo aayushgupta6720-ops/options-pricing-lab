@@ -2,8 +2,11 @@
 
 A leg is long (+) or short (-) some lots of a European call or put. Values are per position, in
 rupees: price per unit x lot size x lots. Before expiry each leg is valued with Black-76 on the
-forward at its own implied vol, and a spot move shifts the forward proportionally (constant
-carry) while each strike keeps its vol ("sticky strike").
+forward at its own implied vol; each strike keeps its vol ("sticky strike").
+
+The forward is F = S * exp(b * tau) with a constant carry rate b, read off today's forward and time
+to expiry. So a spot move shifts the forward proportionally, and as time passes the forward rolls
+down towards spot (`forward_ratio_at`).
 """
 
 from dataclasses import dataclass
@@ -51,8 +54,13 @@ def payoff(legs: list[Leg], spots) -> np.ndarray:
     return total
 
 
+def forward_ratio_at(forward_ratio: float, T: float, remaining: float) -> float:
+    """F / S with `remaining` years left, given F / S today with T years left (constant carry)."""
+    return float(forward_ratio ** (remaining / T)) if T > 0 else 1.0
+
+
 def value(legs: list[Leg], spots, forward_ratio: float, T: float, r: float, vols) -> np.ndarray:
-    """Model value per unit with T years left; forward = spot * forward_ratio."""
+    """Model value per unit with T years left; forward = spot * forward_ratio for that T."""
     spots = np.asarray(spots, dtype=float)
     if T <= 0:
         return payoff(legs, spots)
@@ -104,14 +112,19 @@ def extremes(legs: list[Leg], net_premium: float) -> tuple[float, float]:
 
 
 def greeks(legs: list[Leg], spot: float, forward_ratio: float, T: float, r: float, vols) -> dict:
-    """Position Greeks per unit; same conventions as black_scholes (vega per 1.00, theta per year)."""
+    """Position Greeks per unit; same conventions as black_scholes (vega per 1.00, theta per year).
+
+    Theta holds spot fixed, so it includes the forward rolling down: dF/dt = -b F.
+    """
     total = dict.fromkeys(("delta", "gamma", "vega", "theta"), 0.0)
+    forward = spot * forward_ratio
+    carry = np.log(forward_ratio) / T if T > 0 else 0.0
     for leg, vol in zip(legs, vols, strict=True):
-        g = black_scholes.greeks(spot * forward_ratio, leg.strike, T, r, vol, r, leg.kind)
+        g = black_scholes.greeks(forward, leg.strike, T, r, vol, r, leg.kind)
         weight = leg.side * leg.lots
-        # Greeks above are with respect to the forward; dF/dS = forward_ratio.
+        # Black-76 Greeks are with respect to the forward; dF/dS = forward_ratio.
         total["delta"] += weight * float(g["delta"]) * forward_ratio
         total["gamma"] += weight * float(g["gamma"]) * forward_ratio**2
         total["vega"] += weight * float(g["vega"])
-        total["theta"] += weight * float(g["theta"])
+        total["theta"] += weight * (float(g["theta"]) - float(g["delta"]) * carry * forward)
     return total

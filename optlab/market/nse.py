@@ -12,6 +12,7 @@ Normalised columns:
 
 import io
 import time
+import zipfile
 from datetime import date
 from pathlib import Path
 
@@ -36,6 +37,10 @@ class NotPublished(Exception):
     """No file for this date: a weekend, a market holiday, or not out yet."""
 
 
+class BadResponse(Exception):
+    """NSE answered 200 but not with the file (e.g. an HTML error page)."""
+
+
 def _get(url: str, session: requests.Session | None, retries: int = 3, timeout: float = 30) -> bytes:
     http = session or requests
     for attempt in range(retries):
@@ -56,12 +61,29 @@ def _get(url: str, session: requests.Session | None, retries: int = 3, timeout: 
     raise AssertionError("unreachable")
 
 
+def _bhavcopy_cache(cache_dir: Path, day: date) -> Path:
+    return cache_dir / f"fo_{day:%Y%m%d}.csv.zip"
+
+
+def _vix_cache(cache_dir: Path, day: date) -> Path:
+    return cache_dir / f"ind_close_all_{day:%Y%m%d}.csv"
+
+
+def is_cached(day: date, cache_dir: Path | None) -> bool:
+    """Whether both of the day's files are already cached (so loading it makes no requests)."""
+    return (
+        bool(cache_dir) and _bhavcopy_cache(cache_dir, day).exists() and _vix_cache(cache_dir, day).exists()
+    )
+
+
 def download(day: date, cache_dir: Path | None = None, session: requests.Session | None = None) -> bytes:
     """The raw bhavcopy zip for one day, from the cache when it has it."""
-    cached = cache_dir / f"fo_{day:%Y%m%d}.csv.zip" if cache_dir else None
+    cached = _bhavcopy_cache(cache_dir, day) if cache_dir else None
     if cached and cached.exists():
         return cached.read_bytes()
     raw = _get(URL.format(day=day), session)
+    if not zipfile.is_zipfile(io.BytesIO(raw)):
+        raise BadResponse(f"bhavcopy for {day} is not a zip ({len(raw)} bytes): {raw[:80]!r}")
     if cached:
         cached.parent.mkdir(parents=True, exist_ok=True)
         cached.write_bytes(raw)
@@ -99,12 +121,21 @@ def load(day: date, underlyings=None, cache_dir: Path | None = None, session=Non
     return parse(download(day, cache_dir, session), underlyings)
 
 
-def india_vix(day: date, session: requests.Session | None = None) -> float:
+def india_vix(day: date, session: requests.Session | None = None, cache_dir: Path | None = None) -> float:
     """India VIX close for the day as a decimal (0.1446 for 14.46), or NaN if NSE has no file."""
-    try:
-        raw = _get(INDICES_URL.format(day=day), session)
-    except NotPublished:
-        return float("nan")
+    cached = _vix_cache(cache_dir, day) if cache_dir else None
+    if cached and cached.exists():
+        raw = cached.read_bytes()
+    else:
+        try:
+            raw = _get(INDICES_URL.format(day=day), session)
+        except NotPublished:
+            return float("nan")
+        if not raw.startswith(b"Index Name"):
+            raise BadResponse(f"index file for {day} isn't the expected CSV: {raw[:80]!r}")
+        if cached:
+            cached.parent.mkdir(parents=True, exist_ok=True)
+            cached.write_bytes(raw)
     indices = pd.read_csv(io.BytesIO(raw))
     vix = indices[indices["Index Name"].str.strip().str.upper() == "INDIA VIX"]
     return float(vix["Closing Index Value"].iloc[0]) / 100 if len(vix) else float("nan")

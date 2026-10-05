@@ -1,6 +1,9 @@
 """Summary numbers and grids from an implied-vol chain (market/chain.py output).
 
 Per expiry: at-the-money vol (interpolated at log-moneyness 0) and the 25-delta put and call vols.
+ATM is only reported when the quotes either side of the forward are within MAX_ATM_GAP_SD standard
+deviations of each other; a thin expiry whose nearest put and call sit far apart would otherwise
+interpolate straight across the skew.
 Across expiries: values at fixed tenors, interpolating ATM *total variance* (sigma^2 * T) linearly
 in time, which is the standard way to keep the term structure free of calendar arbitrage. Outside
 the listed expiries the vol is held flat, but only up to EXTRAPOLATION_DAYS away; further out it's
@@ -13,6 +16,7 @@ import pandas as pd
 from optlab import config
 
 EXTRAPOLATION_DAYS = 14
+MAX_ATM_GAP_SD = 1.0
 
 
 def _interp_inside(x_new, x, y):
@@ -24,22 +28,55 @@ def _interp_inside(x_new, x, y):
     return float(np.interp(x_new, x, y))
 
 
+def atm_vol(g: pd.DataFrame) -> float:
+    """IV at log-moneyness 0 for one expiry, or NaN if the bracketing quotes are too far apart."""
+    g = g.sort_values("log_moneyness")
+    k, iv = g["log_moneyness"].to_numpy(), g["iv"].to_numpy()
+    if len(k) == 0 or not k[0] <= 0 <= k[-1]:
+        return np.nan
+    hi = int(np.searchsorted(k, 0.0))
+    if k[hi] == 0:
+        return float(iv[hi])
+    lo = hi - 1
+    gap = (k[hi] - k[lo]) / (0.5 * (iv[lo] + iv[hi]) * np.sqrt(g["T"].iloc[0]))
+    return float(np.interp(0.0, k[lo : hi + 1], iv[lo : hi + 1])) if gap <= MAX_ATM_GAP_SD else np.nan
+
+
+def vol_at_delta(side: pd.DataFrame, target: float) -> float:
+    """IV where one side's forward delta equals `target` (e.g. -0.25 for puts, 0.25 for calls).
+
+    Delta falls as the strike rises for both puts and calls. Noisy quotes can break that order,
+    so it's enforced (running minimum along the strikes) before finding the strike at the target
+    delta; the vol is then read off the smile at that strike. That makes the answer independent of
+    how out-of-order points happen to sort.
+    """
+    side = side.sort_values("log_moneyness")
+    k, iv = side["log_moneyness"].to_numpy(), side["iv"].to_numpy()
+    delta = np.minimum.accumulate(side["delta"].to_numpy())
+    if len(k) < 2 or not delta[-1] <= target <= delta[0]:
+        return np.nan
+    k_target = np.interp(target, delta[::-1], k[::-1])
+    return float(np.interp(k_target, k, iv))
+
+
 METRIC_COLUMNS = ["expiry", "T", "forward", "atm_iv", "put_25d_iv", "call_25d_iv", "skew_25d", "n_quotes"]
 
 
 def expiry_metrics(chain: pd.DataFrame) -> pd.DataFrame:
     """One row per expiry with the METRIC_COLUMNS."""
+    if chain.empty:
+        return pd.DataFrame(columns=METRIC_COLUMNS)
     rows = []
     for expiry, g in chain.groupby("expiry"):
         calls, puts = g[g["option_type"] == "call"], g[g["option_type"] == "put"]
-        put_25 = _interp_inside(-0.25, puts["delta"], puts["iv"])
-        call_25 = _interp_inside(0.25, calls["delta"], calls["iv"])
+        put_25 = vol_at_delta(puts, -0.25)
+        call_25 = vol_at_delta(calls, 0.25)
         rows.append(
             {
                 "expiry": expiry,
                 "T": g["T"].iloc[0],
                 "forward": g["forward"].iloc[0],
-                "atm_iv": _interp_inside(0.0, g["log_moneyness"], g["iv"]),
+                "atm_iv": atm_vol(g),
                 "put_25d_iv": put_25,
                 "call_25d_iv": call_25,
                 "skew_25d": put_25 - call_25,

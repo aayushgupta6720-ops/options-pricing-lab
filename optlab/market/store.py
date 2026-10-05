@@ -8,6 +8,7 @@ backfill over existing data never duplicates anything. In production <root> is a
 orphan `market-data` branch.
 """
 
+from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
@@ -39,8 +40,10 @@ def read_summary(root: Path) -> pd.DataFrame:
     return as_dates(pd.read_parquet(path), "trade_date")
 
 
-def ingested_days(root: Path) -> set[date]:
-    return set(read_summary(root)["trade_date"])
+def ingested(root: Path) -> set[tuple[date, str]]:
+    """The (trade date, underlying) pairs already in the dataset."""
+    summary = read_summary(root)
+    return set(zip(summary["trade_date"], summary["underlying"], strict=True))
 
 
 def read_chain(root: Path, underlying: str, day: date) -> pd.DataFrame:
@@ -57,18 +60,35 @@ def _write(df: pd.DataFrame, path: Path):
 
 
 def save(root: Path, chains: list[pd.DataFrame], summary_rows: list[dict]):
+    """Store some days' results: each (underlying, day) in `summary_rows` or `chains` replaces what's
+    stored for it, chains included; an (underlying, day) with a summary row but no chain rows ends
+    up with no quotes. To change only summary numbers, use write_summary."""
     root = Path(root)
     chains = [c for c in chains if len(c)]
-    if chains:
-        new = pd.concat(chains, ignore_index=True)
-        new["month"] = pd.to_datetime(new["trade_date"]).dt.strftime("%Y-%m")
-        for (underlying, month), rows in new.groupby(["underlying", "month"]):
-            rows = rows.drop(columns="month")
-            path = chain_path(root, underlying, month)
-            if path.exists():
-                old = as_dates(pd.read_parquet(path), "trade_date", "expiry")
-                rows = pd.concat([old[~old["trade_date"].isin(set(rows["trade_date"]))], rows])
-            _write(rows.sort_values(["trade_date", "expiry", "strike"]), path)
+    new = pd.concat(chains, ignore_index=True) if chains else None
+
+    # Each (underlying, day) being saved replaces whatever is stored for it, even when its new
+    # chain is empty (say, a re-run after tightening a filter), so stale quotes never linger.
+    days = {(row["underlying"], row["trade_date"]) for row in summary_rows}
+    if new is not None:
+        days |= set(zip(new["underlying"], new["trade_date"], strict=True))
+    files = defaultdict(set)
+    for underlying, day in days:
+        files[(underlying, f"{day:%Y-%m}")].add(day)
+
+    for (underlying, month), dates in files.items():
+        path = chain_path(root, underlying, month)
+        parts = []
+        if path.exists():
+            old = as_dates(pd.read_parquet(path), "trade_date", "expiry")
+            parts.append(old[~old["trade_date"].isin(dates)])
+        if new is not None:
+            parts.append(new[(new["underlying"] == underlying) & new["trade_date"].isin(dates)])
+        parts = [p for p in parts if len(p)]
+        if parts:
+            _write(pd.concat(parts, ignore_index=True).sort_values(["trade_date", "expiry", "strike"]), path)
+        elif path.exists():
+            path.unlink()
 
     if summary_rows:
         new = pd.DataFrame(summary_rows)
@@ -77,8 +97,13 @@ def save(root: Path, chains: list[pd.DataFrame], summary_rows: list[dict]):
             key = ["trade_date", "underlying"]
             replaced = old.set_index(key).index.isin(new.set_index(key).index)
             new = pd.concat([old[~replaced], new], ignore_index=True)
-        new = with_realized_vol(new.sort_values(["underlying", "trade_date"]).reset_index(drop=True))
-        _write(new, root / SUMMARY)
+        write_summary(root, new)
+
+
+def write_summary(root: Path, summary: pd.DataFrame):
+    """Replace summary.parquet (recomputing realized vol); chains are left alone."""
+    summary = with_realized_vol(summary.sort_values(["underlying", "trade_date"]).reset_index(drop=True))
+    _write(summary, Path(root) / SUMMARY)
 
 
 def adjusted_log_returns(spot: pd.Series, lot_size: pd.Series | None = None) -> pd.Series:

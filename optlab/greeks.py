@@ -41,3 +41,14 @@ def finite_difference(
         "theta": theta,
         "rho": rho,
     }
+
+
+def binomial_greeks(spec: OptionSpec, steps: int = 400) -> dict:
+    """Greeks for a tree-priced option (e.g. American): delta and gamma off the tree's first nodes,
+    the rest by finite differences on the tree."""
+    from optlab.models import binomial
+
+    greeks = finite_difference(lambda s: binomial.price_spec(s, steps), spec)
+    if spec.T > 0 and spec.sigma > 0:
+        greeks["delta"], greeks["gamma"] = binomial.tree_delta_gamma(spec, steps)
+    return greeks

@@ -4,13 +4,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+import requests
 
 from optlab import config
 from optlab.market import nse, store
 from optlab.market.chain import CHAIN_COLUMNS, build_chain
 from optlab.market.forwards import forwards, parity_forward
 from optlab.models import black_scholes
-from optlab.surface import atm_at_tenor, daily_summary, expiry_metrics, smile_grid
+from optlab.surface import atm_at_tenor, atm_vol, daily_summary, expiry_metrics, smile_grid, vol_at_delta
 
 FIXTURES = Path(__file__).parent / "fixtures"
 TRADE_DATE = date(2026, 10, 1)
@@ -89,9 +90,10 @@ def test_india_vix_is_nan_when_there_is_no_file(monkeypatch):
 
 def test_download_uses_the_cache(tmp_path, monkeypatch):
     calls = []
-    monkeypatch.setattr(nse, "_get", lambda url, session: calls.append(url) or b"zip-bytes")
-    assert nse.download(TRADE_DATE, tmp_path) == b"zip-bytes"
-    assert nse.download(TRADE_DATE, tmp_path) == b"zip-bytes"
+    body = (FIXTURES / "fo_20261001_subset.csv.zip").read_bytes()
+    monkeypatch.setattr(nse, "_get", lambda url, session: calls.append(url) or body)
+    assert nse.download(TRADE_DATE, tmp_path) == body
+    assert nse.download(TRADE_DATE, tmp_path) == body
     assert len(calls) == 1
     assert "20261001" in calls[0]
 
@@ -217,7 +219,7 @@ def test_save_is_idempotent_and_reads_back(tmp_path, raw):
     assert len(back) == len(chain)
     assert back["expiry"].iloc[0] == chain["expiry"].iloc[0]
     assert len(store.read_summary(tmp_path)) == 1
-    assert store.ingested_days(tmp_path) == {TRADE_DATE}
+    assert store.ingested(tmp_path) == {(TRADE_DATE, "NIFTY")}
     assert store.read_chain(tmp_path, "NIFTY", date(2026, 10, 2)).empty
 
 
@@ -262,3 +264,98 @@ def test_bonus_issue_is_not_a_price_move(tmp_path):
     assert rv.max() < 0.3  # unadjusted, the halving alone would push it past 300%
     adjusted = store.adjusted_log_returns(pd.Series(spots), pd.Series(lots))
     np.testing.assert_allclose(adjusted.iloc[1:], returns, atol=1e-12)
+
+
+def _quotes(k, iv, delta=None, T=0.25):
+    k = np.asarray(k, dtype=float)
+    return pd.DataFrame(
+        {
+            "log_moneyness": k,
+            "iv": iv,
+            "T": T,
+            "delta": delta if delta is not None else np.where(k < 0, -0.3, 0.3),
+            "option_type": np.where(k < 0, "put", "call"),
+        }
+    )
+
+
+def test_atm_is_not_interpolated_across_a_wide_gap():
+    # RELIANCE, 9 Apr 2025, June expiry: nearest put at k=-0.183 (35.2%), nearest call at +0.079
+    # (26.1%), ~1.85 SD apart. Interpolating gave 28.9% against ~24.5% on the days around it.
+    wide = _quotes([-0.25, -0.183, 0.079], [0.38, 0.352, 0.261], T=0.21)
+    assert np.isnan(atm_vol(wide))
+    close = _quotes([-0.04, -0.01, 0.02, 0.05], [0.16, 0.15, 0.145, 0.15], T=0.21)
+    assert atm_vol(close) == pytest.approx(0.15 + (0.145 - 0.15) * (0.01 / 0.03))
+
+
+def test_25_delta_vol_ignores_how_noisy_deltas_sort():
+    k = np.array([-0.20, -0.15, -0.12, -0.10, -0.05])
+    iv = np.array([0.22, 0.20, 0.19, 0.185, 0.17])
+    # The -0.12 point's delta is out of order (noisy price): -0.24 sits between its neighbours'
+    # strikes but on the "wrong" side of -0.25.
+    noisy = np.array([-0.08, -0.18, -0.24, -0.23, -0.40])
+    value = vol_at_delta(_quotes(k, iv, noisy), -0.25)
+    assert 0.17 < value < 0.19
+    assert value == vol_at_delta(_quotes(k[::-1], iv[::-1], noisy[::-1]), -0.25)
+
+
+def test_resaving_a_day_with_no_quotes_removes_the_old_ones(tmp_path, raw):
+    store.save(tmp_path, [build_chain(raw, "NIFTY")], [_summary_row(TRADE_DATE, "NIFTY", 22421.95)])
+    assert len(store.read_chain(tmp_path, "NIFTY", TRADE_DATE)) > 100
+    store.save(tmp_path, [pd.DataFrame(columns=CHAIN_COLUMNS)], [_summary_row(TRADE_DATE, "NIFTY", 22421.95)])
+    assert store.read_chain(tmp_path, "NIFTY", TRADE_DATE).empty
+    assert not store.chain_path(tmp_path, "NIFTY", "2026-10").exists()
+
+
+class FakeSession:
+    """Answers each GET with the next status code in the list."""
+
+    def __init__(self, *statuses, content=b"ok"):
+        self.statuses, self.content, self.calls = list(statuses), content, 0
+
+    def get(self, url, headers=None, timeout=None):
+        self.calls += 1
+        response = requests.Response()
+        response.status_code, response._content, response.url = self.statuses.pop(0), self.content, url
+        return response
+
+
+@pytest.fixture
+def no_sleep(monkeypatch):
+    monkeypatch.setattr(nse.time, "sleep", lambda seconds: None)
+
+
+def test_get_treats_404_as_not_published(no_sleep):
+    with pytest.raises(nse.NotPublished):
+        nse._get("https://example/x", FakeSession(404))
+
+
+def test_get_fails_fast_on_403(no_sleep):
+    session = FakeSession(403)
+    with pytest.raises(requests.HTTPError):
+        nse._get("https://example/x", session)
+    assert session.calls == 1  # blocked: retrying won't help
+
+
+def test_get_retries_rate_limits_and_server_errors(no_sleep):
+    session = FakeSession(429, 503, 200)
+    assert nse._get("https://example/x", session) == b"ok"
+    assert session.calls == 3
+    with pytest.raises(requests.HTTPError):
+        nse._get("https://example/x", FakeSession(500, 502, 503))
+
+
+def test_download_refuses_a_non_zip_and_caches_nothing(tmp_path, no_sleep):
+    session = FakeSession(200, content=b"<html>Access denied</html>")
+    with pytest.raises(nse.BadResponse):
+        nse.download(TRADE_DATE, tmp_path, session)
+    assert not list(tmp_path.iterdir())
+
+
+def test_india_vix_is_cached(tmp_path, monkeypatch):
+    calls = []
+    body = (FIXTURES / "ind_close_all_01102026.csv").read_bytes()
+    monkeypatch.setattr(nse, "_get", lambda url, session: calls.append(url) or body)
+    assert nse.india_vix(TRADE_DATE, cache_dir=tmp_path) == pytest.approx(0.1446)
+    assert nse.india_vix(TRADE_DATE, cache_dir=tmp_path) == pytest.approx(0.1446)
+    assert len(calls) == 1

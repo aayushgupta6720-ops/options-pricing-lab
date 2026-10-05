@@ -3,6 +3,10 @@
 Run: streamlit run app.py
 The option inputs for the Pricing lab pages live here, in the sidebar, so they carry across those
 pages; each page reads the resulting OptionSpec from st.session_state["spec"].
+
+The sidebar inputs are only drawn on the Pricing lab pages, and Streamlit drops the state of
+widgets that aren't drawn in a run. Re-assigning their keys at the top of every run keeps them
+alive while the viewer is on a market page.
 """
 
 import streamlit as st
@@ -25,32 +29,47 @@ LAB = [
 page = st.navigation({"NSE market": MARKET, "Pricing lab": LAB})
 
 HULL = {"S": 42.0, "K": 40.0, "days": 183, "sigma": 0.20, "r": 0.10, "q": 0.0, "kind": "call"}
+INPUT_KEYS = ("in_S", "in_K", "in_days", "in_sigma", "in_r", "in_q", "in_kind", "in_style")
+
+for key in INPUT_KEYS:
+    if key in st.session_state:
+        st.session_state[key] = st.session_state[key]
 
 
 def load_inputs(values: dict):
-    st.session_state.update(
-        {
-            "in_S": float(values["S"]),
-            "in_K": float(values["K"]),
-            "in_days": int(values["days"]),
-            "in_sigma": round(100 * values["sigma"], 2),
-            "in_r": round(100 * values["r"], 2),
-            "in_q": round(100 * values["q"], 2),
-            "in_kind": values["kind"],
-            "market": values if "market_price" in values else None,
-        }
-    )
+    inputs = {
+        "in_S": float(values["S"]),
+        "in_K": float(values["K"]),
+        "in_days": int(values["days"]),
+        "in_sigma": round(100 * values["sigma"], 2),
+        "in_r": round(100 * values["r"], 2),
+        "in_q": round(100 * values["q"], 2),
+        "in_kind": values["kind"],
+    }
+    st.session_state.update(inputs)
+    st.session_state.setdefault("in_style", "european")
+    # Remember exactly what was loaded, so the Pricer only compares with the market close while
+    # the inputs are still that option's.
+    st.session_state["market"] = {**values, "inputs": inputs} if "market_price" in values else None
+
+
+def latest_market_option() -> dict | None:
+    try:
+        return data.market_option()
+    except data.DataUnavailable:
+        st.sidebar.warning("Market data can't be reached right now, so the textbook example is loaded.")
+        return None
 
 
 if page.title in {p.title for p in LAB}:
     if "in_S" not in st.session_state:
-        load_inputs(data.market_option() or HULL)
+        load_inputs(latest_market_option() or HULL)
 
     with st.sidebar:
         st.markdown("### Option")
         c1, c2 = st.columns(2)
         if c1.button("Latest NIFTY ATM", help="At-the-money NIFTY option, first expiry 20+ days out"):
-            market = data.market_option()
+            market = latest_market_option()
             if market:
                 load_inputs(market)
             else:
@@ -77,7 +96,6 @@ if page.title in {p.title for p in LAB}:
             "Exercise",
             ["european", "american"],
             key="in_style",
-            default="european",
             format_func=str.title,
             required=True,
             help="NSE options are European. American exercise is priced by the binomial tree only.",

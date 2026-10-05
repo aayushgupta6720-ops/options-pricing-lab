@@ -14,19 +14,20 @@ st.caption(
 
 c1, c2, c3 = st.columns(3)
 underlying = c1.selectbox("Underlying", data.UNDERLYINGS, key="strategy_underlying")
-days = data.days_for(underlying)
-if not days:
-    st.error("No market data yet.")
+as_of, chain = data.load_or_stop(data.latest_chain, underlying)
+if as_of is None:
+    st.info(f"No quotes for {underlying} yet.")
     st.stop()
-chain = data.chain(underlying, days[0])
 expiries = sorted(chain["expiry"].unique())
-first_fortnight = next((i for i, e in enumerate(expiries) if (e - days[0]).days >= 14), 0)
+first_fortnight = next((i for i, e in enumerate(expiries) if (e - as_of).days >= 14), 0)
+# Keys include the underlying (and expiry below) so a value chosen for one doesn't carry over to
+# another where it makes no sense, e.g. NIFTY's 450-point wings on a ₹1,200 stock.
 expiry = c2.selectbox(
     "Expiry",
     expiries,
     index=first_fortnight,
-    format_func=lambda e: f"{e:%d %b %Y} ({(e - days[0]).days}d)",
-    key="strategy_expiry",
+    format_func=lambda e: f"{e:%d %b %Y} ({(e - as_of).days}d)",
+    key=f"strategy_expiry_{underlying}",
 )
 presets = list(strategy.PRESETS)
 preset = c3.selectbox("Strategy", presets, index=presets.index("Iron condor"), key="strategy_preset")
@@ -38,13 +39,15 @@ strikes = np.sort(quotes["strike"].unique())
 step = float(np.min(np.diff(strikes))) if len(strikes) > 1 else max(round(spot * 0.01), 1)
 atm = float(strikes[np.abs(strikes - forward).argmin()])
 default_width = max(step, round(spot * 0.02 / step) * step)
+max_width = max(step, np.floor(0.45 * atm / step) * step)  # keeps a condor's outer put strike > 0
 
 width = st.number_input(
     "Wing width (distance between strikes)",
     min_value=step,
-    value=default_width,
+    max_value=max_width,
+    value=min(default_width, max_width),
     step=step,
-    key="strategy_width",
+    key=f"strategy_width_{underlying}",
 )
 legs_df = pd.DataFrame(
     [
@@ -88,10 +91,14 @@ net = strategy.premium(legs, prices)
 pal = theme.current()
 lo, hi = min(spot, *(leg.strike for leg in legs)), max(spot, *(leg.strike for leg in legs))
 spots = np.linspace(lo - 0.12 * spot, hi + 0.12 * spot, 601)
-days_left = max((expiry - days[0]).days, 1)
-horizon = st.slider("Days from now for the model curve", 0, days_left - 1, 0, key="strategy_horizon")
+days_left = max((expiry - as_of).days, 1)
+horizon = st.slider(
+    "Days from now for the model curve", 0, days_left - 1, 0, key=f"strategy_horizon_{underlying}_{expiry}"
+)
 at_expiry = (strategy.payoff(legs, spots) - net) * lot
-before = (strategy.value(legs, spots, ratio, T - horizon / 365, r, vols) - net) * lot
+remaining = T - horizon / 365
+later_ratio = strategy.forward_ratio_at(ratio, T, remaining)  # the forward rolls down towards spot
+before = (strategy.value(legs, spots, later_ratio, remaining, r, vols) - net) * lot
 bes = strategy.breakevens(spots, at_expiry)
 
 
@@ -128,7 +135,7 @@ g4.metric(
 )
 
 st.caption(
-    f"{underlying} close {spot:,.2f} on {days[0]:%d %b %Y}; forward {forward:,.2f}; lot size {lot}. "
+    f"{underlying} close {spot:,.2f} on {as_of:%d %b %Y}; forward {forward:,.2f}; lot size {lot}. "
     "P&L is for the whole position in rupees, before brokerage and taxes."
 )
 with st.expander("Data: legs"):

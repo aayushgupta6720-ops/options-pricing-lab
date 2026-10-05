@@ -11,17 +11,15 @@ st.caption(
     "Out-of-the-money quotes only, with at least 20 trades; forwards from put-call parity; Black-76 inversion."
 )
 
-summary = data.summary()
-if summary.empty:
-    st.error("No market data yet: the dataset hasn't been published.")
-    st.stop()
-
 c1, c2, _ = st.columns([1, 1, 2])
 underlying = c1.selectbox("Underlying", data.UNDERLYINGS, key="surface_underlying")
-days = data.days_for(underlying)
+days = data.load_or_stop(data.days_for, underlying)
+if not days:
+    st.info(f"No data for {underlying} yet.")
+    st.stop()
 day = c2.selectbox("Trading day", days, format_func=lambda d: f"{d:%a %d %b %Y}", key="surface_day")
 
-rows = summary[summary["underlying"] == underlying].set_index("trade_date")
+rows = data.rows_for(underlying).set_index("trade_date")
 today = rows.loc[day]
 previous = rows[rows.index < day].iloc[-1] if (rows.index < day).any() else None
 
@@ -49,7 +47,7 @@ k3.metric(
 k4.metric("20-day realized vol", pct(today["rv_20d"]), delta("rv_20d"), delta_color="off")
 k5.metric("India VIX", pct(today["india_vix"]), delta("india_vix"), delta_color="off")
 
-chain = data.chain(underlying, day)
+chain = data.load_or_stop(data.chain, underlying, day)
 if chain.empty:
     st.warning("No usable quotes for this day.")
     st.stop()

@@ -9,17 +9,15 @@ from ui import charts, data, theme
 st.title("Volatility history")
 st.caption("One point per trading day from the daily snapshots, back to July 2024.")
 
-summary = data.summary()
-if summary.empty:
-    st.error("No market data yet.")
-    st.stop()
-
 RANGES = {"3 months": 91, "6 months": 182, "1 year": 365, "All": None}
 c1, c2, _ = st.columns([1, 2, 1])
 underlying = c1.selectbox("Underlying", data.UNDERLYINGS, key="history_underlying")
 span = c2.segmented_control("Range", list(RANGES), default="1 year", required=True, key="history_range")
 
-rows = summary[summary["underlying"] == underlying].sort_values("trade_date").reset_index(drop=True)
+rows = data.load_or_stop(data.rows_for, underlying)
+if rows.empty:
+    st.info(f"No data for {underlying} yet.")
+    st.stop()
 # Volatility that actually followed: realized vol over the next 20 trading days.
 rows["rv_next_20d"] = rows["rv_20d"].shift(-REALIZED_WINDOW)
 if RANGES[span]:

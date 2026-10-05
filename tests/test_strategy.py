@@ -75,3 +75,22 @@ def test_selling_the_inner_strikes_of_a_condor_collects_a_credit():
     best, worst = strategy.extremes(legs, net)
     assert best == pytest.approx(-net)
     assert worst == pytest.approx(-(500 + net))
+
+
+def test_forward_rolls_down_to_spot_at_expiry():
+    assert strategy.forward_ratio_at(1.02, 0.5, 0.5) == pytest.approx(1.02)
+    assert strategy.forward_ratio_at(1.02, 0.5, 0.25) == pytest.approx(np.sqrt(1.02))
+    assert strategy.forward_ratio_at(1.02, 0.5, 0.0) == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("preset", ["Long call", "Bull call spread", "Iron condor"])
+def test_theta_matches_the_value_a_day_later_with_spot_unchanged(preset):
+    legs = strategy.preset_legs(preset, 22600, 300)
+    spot, ratio, T, r = 22556.0, 1.0019 ** (60 / 14), 60 / 365, 0.055  # 60 days, a few % carry
+    vols = [0.14 - 0.0001 * i for i in range(len(legs))]
+    h = 1e-4
+    later = strategy.value(legs, [spot], strategy.forward_ratio_at(ratio, T, T - h), T - h, r, vols)[0]
+    now = strategy.value(legs, [spot], ratio, T, r, vols)[0]
+    assert strategy.greeks(legs, spot, ratio, T, r, vols)["theta"] == pytest.approx(
+        (later - now) / h, rel=1e-3
+    )

@@ -26,6 +26,16 @@ rolled back from the payoff at expiry; for American exercise each node takes the
 continuation value and immediate exercise. The error versus Black-Scholes falls roughly like $1/n$ and
 zig-zags depending on where the strike sits between nodes (see the *Model convergence* page).
 
+CRR needs $d < e^{(r-q)\Delta t} < u$, which fails when the drift per step outruns the volatility
+(low vol, high rates, long maturities, few steps). The tree then switches to a drift-centred lattice,
+$u, d = e^{(r - q - \sigma^2/2)\Delta t \pm \sigma\sqrt{\Delta t}}$, whose probability is always in
+$(0, 1)$.
+
+**Greeks from the tree.** Delta and gamma are read off the first two steps' nodes (Hull's method).
+Bumping spot by less than the node spacing and re-running doesn't work: at that scale the tree price
+is piecewise linear in $S$, so a second difference comes out as zero or explodes. Vega, theta and rho
+re-price the tree with bumped inputs.
+
 **Checked against:** Hull's five-step American put (4.49); American call with no dividends equals the
 European one; convergence to Black-Scholes.
 
@@ -62,8 +72,11 @@ below 1e-10 for any quote worth at least the ₹0.05 tick.
    2+ days to expiry, and $|\ln(K/F)| \le 0.4$.
 4. **Invert Black-76** ($C = D[F N(d_1) - K N(d_2)]$), which is Black-Scholes with $S = F$, $q = r$.
    NSE options are European, so this is exact rather than an approximation.
-5. **Summarise.** ATM vol per expiry by interpolating at $\ln(K/F) = 0$; 25-delta vols by
-   interpolating in forward delta. Fixed tenors interpolate ATM *total variance* $\sigma^2 T$
+5. **Summarise.** ATM vol per expiry by interpolating at $\ln(K/F) = 0$, but only when the quotes
+   either side of the forward are within one standard deviation ($\sigma\sqrt T$) of each other;
+   otherwise a thin expiry would interpolate straight across the skew. 25-delta vols: find the
+   strike where forward delta hits ±0.25 (with delta forced to fall as the strike rises, since noisy
+   quotes can break that order), then read the vol off the smile there. Fixed tenors interpolate ATM *total variance* $\sigma^2 T$
    linearly in $T$ (the usual way to avoid calendar arbitrage), with flat extrapolation only within
    14 days of a listed expiry. Realized vol is the annualised standard deviation of the last 20
    daily log returns, with bonus issues and splits taken out: a move over 15% that comes with a
@@ -77,6 +90,7 @@ because VIX also prices the put wing.
 
 Each leg is priced with Black-76 at its own strike's implied vol, read off that expiry's smile.
 Before expiry, a spot move shifts the forward proportionally and each strike keeps its vol ("sticky
-strike"). Max profit and loss come from evaluating the piecewise-linear payoff at each strike and at
+strike"). The carry rate $b = \ln(F/S)/T$ is held constant, so as time passes the forward rolls down
+towards spot ($F = S e^{b\tau}$); theta includes that roll-down. Max profit and loss come from evaluating the piecewise-linear payoff at each strike and at
 spot 0, so a short put's worst case (spot to zero) isn't missed. Only a net long or short call
 position is unlimited.

@@ -45,3 +45,14 @@ def test_prices_outside_no_arbitrage_bounds_are_nan():
     T = np.array([0.5, 0.5, 0.0, 0.5])
     out = implied_vol(prices, 100.0, 90.0, T, 0.05)
     assert np.isnan(out).all()
+
+
+def test_american_implied_vol_round_trip():
+    from optlab.contracts import OptionSpec
+    from optlab.implied_vol import american_implied_vol
+    from optlab.models import binomial
+
+    spec = OptionSpec(50.0, 55.0, 0.75, 0.08, 0.3, kind="put", style="american")
+    price = binomial.price_spec(spec, steps=300)
+    assert american_implied_vol(price, spec) == pytest.approx(0.3, abs=1e-6)
+    assert np.isnan(american_implied_vol(1.0, spec))  # below the exercise value of 5

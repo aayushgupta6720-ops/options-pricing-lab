@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from optlab.greeks import finite_difference
-from optlab.implied_vol import implied_vol
+from optlab.greeks import binomial_greeks
+from optlab.implied_vol import american_implied_vol, implied_vol
 from optlab.models import binomial, black_scholes, monte_carlo
 from optlab.models.registry import MODELS
 from ui import charts, theme
@@ -65,12 +65,8 @@ if spec.style == "american":
     )
 
 market = st.session_state.get("market")
-if market and (market["S"], market["K"], market["days"], market["kind"]) == (
-    spec.S,
-    spec.K,
-    round(spec.T * 365),
-    spec.kind,
-):
+unchanged = market and all(st.session_state.get(key) == value for key, value in market["inputs"].items())
+if unchanged and spec.style == "european":
     c1, c2 = st.columns(2)
     c1.metric("NSE close", f"₹{market['market_price']:,.2f}")
     c2.metric("Black-Scholes at the market's implied vol", f"₹{bs_price:,.2f}")
@@ -84,8 +80,11 @@ if spec.style == "european":
     greeks = black_scholes.greeks_spec(spec)
     source = "Analytic Black-Scholes."
 else:
-    greeks = finite_difference(lambda s: binomial.price_spec(s, steps=400), spec)
-    source = "Finite differences on a 400-step binomial tree (gamma from a tree is noisy)."
+    greeks = binomial_greeks(spec, steps=400)
+    source = (
+        "400-step binomial tree: delta and gamma from its first nodes, vega, theta and rho by "
+        "re-pricing with bumped inputs."
+    )
 g1, g2, g3, g4, g5 = st.columns(5)
 g1.metric("Delta", f"{greeks['delta']:.4f}", help="Change in price per 1 unit move in spot.")
 g2.metric("Gamma", f"{greeks['gamma']:.6f}", help="Change in delta per 1 unit move in spot.")
@@ -112,8 +111,14 @@ fig.add_vline(x=spec.S, line=dict(color=pal.muted, width=1))
 st.plotly_chart(fig, width="stretch")
 
 st.subheader("Implied volatility from a price")
-price_in = st.number_input("Market price", min_value=0.0, value=round(bs_price, 4), format="%.4f")
-iv = implied_vol(price_in, spec.S, spec.K, spec.T, spec.r, spec.q, spec.kind)
+american = spec.style == "american"
+model_price = binomial.price_spec(spec, steps=300) if american else bs_price
+price_in = st.number_input("Market price", min_value=0.0, value=round(model_price, 4), format="%.4f")
+if american:
+    iv = american_implied_vol(price_in, spec)
+    st.caption("American exercise: solved on a 300-step binomial tree.")
+else:
+    iv = implied_vol(price_in, spec.S, spec.K, spec.T, spec.r, spec.q, spec.kind)
 if np.isnan(iv):
     st.warning("No volatility reproduces that price: it's outside the no-arbitrage bounds for this option.")
 else:
