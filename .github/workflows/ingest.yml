@@ -1,0 +1,60 @@
+name: Daily NSE ingest
+
+# Adds each trading day's NSE option data to the dataset on the market-data branch, which the
+# app reads. NSE publishes the F&O bhavcopy in the evening IST, and each run looks back over the
+# last 10 days, so a day that was late or failed is picked up by the next run. Holidays have no
+# file and are skipped; any other download failure (NSE blocking us) fails the run.
+
+on:
+  schedule:
+    - cron: "47 14 * * 1-5" # 20:17 IST, weekdays
+  workflow_dispatch:
+    inputs:
+      since:
+        description: Ingest every trading day from this date (YYYY-MM-DD) instead of the last 10 days
+        required: false
+
+permissions:
+  contents: write # push to market-data
+
+# One run at a time, so two never push to market-data at once.
+concurrency:
+  group: market-data
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check out the dataset
+        uses: actions/checkout@v7
+        with:
+          ref: market-data
+          path: data
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: python -m pip install -r requirements.txt
+
+      - name: Ingest
+        run: python -m scripts.ingest --data-dir data ${SINCE:+--since "$SINCE"}
+        env:
+          SINCE: ${{ inputs.since }}
+
+      - name: Save
+        run: |
+          cd data
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing new to save"
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Ingest $(date -u +%Y-%m-%d)"
+          git push

@@ -1,0 +1,27 @@
+name: CI
+
+# Lint and the offline test suite on every push and pull request. The NSE tests read a small
+# committed fixture, so nothing here touches the network. Render deploys only after this passes.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12" # keep in step with PYTHON_VERSION in render.yaml
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - run: ruff check . && ruff format --check .
+      - run: python -m pytest -q
