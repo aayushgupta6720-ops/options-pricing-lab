@@ -4,7 +4,9 @@ services:
     runtime: python
     plan: free
     region: oregon
-    buildCommand: pip install -r requirements.txt
+    # Compiling the numba kernels at build time puts their cache in the deployed code, so a cold
+    # start (the free plan sleeps when idle) doesn't spend its first exotic price compiling.
+    buildCommand: pip install -r requirements.txt && python -c "from optlab.exotics import warm_up; warm_up()"
     startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
     healthCheckPath: /_stcore/health
     # Deploy only commits that pass CI (.github/workflows/ci.yml).

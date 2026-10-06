@@ -142,7 +142,7 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
 
 ## Testing
 
-208 tests run in CI (`ruff` + `pytest`, about 90 seconds, no network):
+209 tests run in CI (`ruff` + `pytest`, about 90 seconds, no network):
 
 - **Models:** Hull's textbook values for prices, Greeks and the 5-step American put; put-call
   parity; tree → Black-Scholes convergence, including the low-vol cases where the tree switches

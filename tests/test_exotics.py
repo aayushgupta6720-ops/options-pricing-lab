@@ -135,3 +135,7 @@ def test_chunked_rough_bergomi_gives_the_same_answer():
     )
     assert chunked.n_paths == 24_000
     assert abs(whole.price - chunked.price) < 4 * np.hypot(whole.std_error, chunked.std_error)
+
+
+def test_warm_up_compiles_without_error():
+    ex.warm_up()

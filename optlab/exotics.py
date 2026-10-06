@@ -148,12 +148,12 @@ def paths_rough_bergomi(S, T, r, q, params, xi, n_paths, rng=None):
     return log_s, step_var
 
 
-def stats_rough_bergomi(S, T, r, q, params, xi, n_paths, rng=None, barrier=None, chunk=4_000) -> PathStats:
+def stats_rough_bergomi(S, T, r, q, params, xi, n_paths, rng=None, barrier=None, chunk=2_000) -> PathStats:
     """Path statistics under rough Bergomi, simulated `chunk` paths at a time.
 
     A rough Bergomi path needs its whole history (the Volterra integral, an FFT convolution), so
     simulating every path at once costs memory in proportion to paths x steps: about 280 MB for
-    20,000 paths over 22 days. Chunks keep the peak to a fifth of that for the same answer.
+    20,000 paths over 22 days. Chunks keep the peak to a tenth of that for the same answer.
     """
     rng = np.random.default_rng(rng)
     parts = []
@@ -258,6 +258,18 @@ def _kernels():
 
     _KERNELS.update(gbm=gbm, heston=heston)
     return _KERNELS
+
+
+def warm_up():
+    """Compile the kernels now (Render's build runs this), so numba's on-disk cache ships with the
+    app and a cold start doesn't spend its first exotic price compiling."""
+    from optlab.models.heston import HestonParams
+
+    for barrier in (None, 90.0):
+        stats_black_scholes_numba(100.0, 0.1, 0.05, 0.0, 0.2, 2, 2, seed=0, barrier=barrier)
+        stats_heston_numba(
+            100.0, 0.1, 0.05, 0.0, HestonParams(0.04, 2.0, 0.04, 0.5, -0.5), 2, 2, seed=0, barrier=barrier
+        )
 
 
 def _stats(out: np.ndarray) -> PathStats:

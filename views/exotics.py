@@ -53,7 +53,7 @@ S, K, T, r, q, sigma = spec.S, spec.K, spec.T, spec.r, spec.q, spec.sigma
 
 # --- Price under each model -----------------------------------------------------------------
 BS_PATHS, HESTON_PATHS = 100_000, 40_000
-rough_paths = 20_000  # simulated 4,000 at a time (ex.stats_rough_bergomi), so memory stays flat
+rough_paths = 20_000  # simulated 2,000 at a time (ex.stats_rough_bergomi), so memory stays flat
 
 
 @st.cache_data(show_spinner=False, max_entries=16)
