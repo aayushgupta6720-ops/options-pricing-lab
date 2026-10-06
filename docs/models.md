@@ -151,3 +151,80 @@ at vols no diffusion produces, and a handful of them would dominate any fit.
 Fits run in the daily job after ingest and are stored in `models/heston.parquet` and
 `models/sabr.parquet` on the `market-data` branch; the app only evaluates them, so a 0.1-CPU Render
 instance never has to calibrate anything.
+
+## Variance swaps and India VIX (`optlab/variance.py`)
+
+A variance swap's fair strike is replicated by out-of-the-money options weighted by $1/K^2$:
+$\sigma^2_{VS}T = 2e^{rT}\big[\int_0^F P(K)K^{-2}dK + \int_F^\infty C(K)K^{-2}dK\big]$, discretised
+like the VIX (each strike weighted by half the distance to its neighbours). Interpolating total
+variance to 30 days reproduces India VIX: over 562 days, correlation 0.979, 0.30 points below it on
+average (the strip stops at the quoted strikes), 0.45 points off on a typical day.
+
+## Rough Bergomi (`optlab/models/rough_bergomi.py`)
+
+$$V_t = \xi_0(t)\exp\Big(\eta Y_t - \tfrac{\eta^2}{2}t^{2H}\Big), \qquad Y_t = \sqrt{2H}\int_0^t (t - s)^{H - 1/2}dW_s, \qquad \frac{dS_t}{S_t} = \sqrt{V_t}\,dB_t, \quad B = \rho W + \sqrt{1 - \rho^2}W^\perp$$
+
+(Bayer, Friz and Gatheral, 2016). $Y$ is a Riemann–Liouville fractional Brownian motion with
+$\mathrm{Var}(Y_t) = t^{2H}$, so $E[V_t] = \xi_0(t)$, the forward variance curve. For $H < 1/2$ its
+paths are rougher than Brownian motion's, and the at-the-money skew behaves like $T^{H - 1/2}$ as
+$T \to 0$; a Markovian model like Heston has a skew that levels off instead.
+
+**Simulation.** The hybrid scheme with $\kappa = 1$ (Bennedsen, Lunde and Pakkanen, 2017; as in
+McCrickerd and Pakkanen, 2018): on a grid of 6-hour steps, the integral over the most recent step is
+drawn exactly, jointly with that step's Brownian increment (a 2×2 covariance, factored by hand
+because it's singular at $H = 1/2$); the rest is a Riemann sum with the kernel evaluated at the
+optimal points $b_k = \big(\frac{k^{a+1} - (k-1)^{a+1}}{a+1}\big)^{1/a}$, $a = H - 1/2$, done for every
+path at once as an FFT convolution. The spot is simulated relative to its forward, $X = S/F$, and the
+terminal $X$ is rescaled to mean exactly 1 so put-call parity holds exactly. 20,000 paths over 91 days
+take about 0.25 s.
+
+**Checks:** $E[X_T] = 1$; $E[V_t] = \xi_0(t)$ for a stepped curve; $\mathrm{Var}(Y_t) = t^{2H}$ for
+$H = 0.05, 0.1, 0.3$; at $H = 1/2$, $Y$ is exactly the Brownian motion; the simulated ATM skew falls
+with slope −0.35 between 3 and 28 days for $H = 0.1$ (theory −0.4 as $T \to 0$) and stays flat for
+$H = 1/2$.
+
+**Calibration** (`calibration.fit_rough_bergomi`), NIFTY expiries from 2 to 91 days between the
+5-delta wings: $H$, $\eta$, $\rho$ and the forward variance curve (one level per interval between
+expiries, started from the ATM term structure), by least squares on vega-weighted price errors.
+Every evaluation uses the same 20,000 antithetic paths (the same random numbers on every day too),
+so the objective is smooth and a small parameter change moves prices far less than Monte Carlo noise
+would. The Volterra process is cached while $H$ is unchanged and the variance factor while $H$ and
+$\eta$ are, so most of the optimiser's finite-difference steps skip the FFT. About 10 s a day.
+
+Why fit $\xi_0$ rather than take it from variance swaps: the replicated variance swaps were too noisy
+expiry by expiry. A one-week strip includes the lottery-ticket wings (9.7% against 7.6% at the money
+on 23 Dec 2025), and a thinly quoted expiry's strip stops short (7.8% against 8.8%). Taking them as
+given put whole expiries 1.3 points off.
+
+**Comparing with Heston fairly.** Heston is refitted each day to the same quotes. Rough Bergomi has
+an extra level per expiry, so its overall error isn't directly comparable; the *shape error* (RMSE
+after removing each expiry's average miss) compares how well each gets the smile's shape, which is
+what roughness is about.
+
+## Exotic options (`optlab/exotics.py`)
+
+Asian (arithmetic and geometric averages over the fixings), barrier (up/down, in/out) and
+floating-strike lookback options, on paths from Black-Scholes, Heston or rough Bergomi.
+
+**Continuous monitoring from daily fixings.** Between fixings the log-price is treated as a Brownian
+bridge with that interval's variance (exact under Black-Scholes; the interval's realised variance
+under stochastic volatility). A knock-out pays the vanilla payoff times the product over intervals of
+the bridge's survival probability $1 - e^{-2(x_0 - b)(x_1 - b)/w}$, a conditional expectation that's
+smoother than sampling crossings; a knock-in pays the rest. Lookback extremes are sampled exactly
+from each interval's bridge: $\min = \frac{1}{2}\big(x_0 + x_1 - \sqrt{(x_1 - x_0)^2 - 2w\ln U}\big)$.
+
+**Closed forms under Black-Scholes** check the Monte Carlo: the discretely monitored geometric Asian
+(the log of the average is normal), the eight standard barriers (Haug, 2007), and Goldman–Sosin–Gatto
+floating lookbacks. Every one matches within Monte Carlo error, and knock-in + knock-out = vanilla
+exactly.
+
+**numba.** For Black-Scholes and Heston, compiled kernels simulate each path and reduce it on the fly
+(running average, extremes, survival probability) without storing it: for 200,000 paths and 50 fixings
+0.8 s and no path arrays, against 1.1 s and 162 MB in numpy. Rough Bergomi needs each path's whole
+history (the Volterra integral), so it stays in numpy with an FFT. numba is imported only when an
+exotic is priced.
+
+**Variance reduction** (arithmetic Asian, Black-Scholes), measured as variance per path against plain
+Monte Carlo: antithetic paths about 2×; the geometric Asian as a control variate (closed form, and it
+moves almost in lockstep with the arithmetic average) about 1,800×; scrambled Sobol points with a
+principal-component path construction about 7,600×; both together about 200,000×.

@@ -1,6 +1,9 @@
 """Settings shared by the data pipeline and the app."""
 
 UNDERLYINGS = ("NIFTY", "BANKNIFTY", "RELIANCE")
+# Rough Bergomi is fitted by Monte Carlo (~10 s a day) and is about the short end of the smile, so
+# only for the underlying with weekly expiries.
+ROUGH_UNDERLYINGS = ("NIFTY",)
 
 # Discount rate, continuously compounded. Forwards come from put-call parity, so this only enters
 # through discounting: a 1-point error moves a 30-day implied vol by under 0.2% of its value.

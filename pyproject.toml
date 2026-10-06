@@ -8,3 +8,7 @@ ignore = ["E501"]  # the formatter owns line length; long strings stay readable
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff.lint.per-file-ignores]
+# numba's compiled code has its own np.random (seeded per call); it doesn't take Generator objects
+"optlab/exotics.py" = ["NPY002"]

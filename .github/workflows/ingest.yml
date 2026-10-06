@@ -59,7 +59,8 @@ jobs:
           DAY: ${{ inputs.date }}
           FORCE: ${{ inputs.force && '1' || '' }}
 
-      # Heston and SABR fits for any day that doesn't have them yet (a few seconds a day).
+      # Model fits for any day that doesn't have them yet: Heston and SABR (a second a day), rough
+      # Bergomi for NIFTY (about ten seconds a day).
       - name: Calibrate
         id: calibrate
         if: ${{ !cancelled() }}

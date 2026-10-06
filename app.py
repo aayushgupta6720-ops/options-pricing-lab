@@ -21,12 +21,14 @@ MARKET = [
     st.Page("views/history.py", title="Volatility history", icon=":material/timeline:"),
     st.Page("views/strategy.py", title="Strategy payoff", icon=":material/stacked_line_chart:"),
     st.Page("views/models.py", title="Model vs market", icon=":material/query_stats:"),
+    st.Page("views/rough.py", title="Rough volatility", icon=":material/blur_on:"),
 ]
 LAB = [
     st.Page("views/pricer.py", title="Pricer", icon=":material/calculate:"),
     st.Page("views/greeks.py", title="Greeks", icon=":material/function:"),
     st.Page("views/convergence.py", title="Model convergence", icon=":material/insights:"),
     st.Page("views/heston.py", title="Heston model", icon=":material/waves:"),
+    st.Page("views/exotics.py", title="Exotic options", icon=":material/route:"),
 ]
 page = st.navigation({"NSE market": MARKET, "Pricing lab": LAB})
 

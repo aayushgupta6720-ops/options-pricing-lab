@@ -22,8 +22,17 @@ import requests
 import streamlit as st
 
 from optlab import config
-from optlab.market.store import HESTON_FITS, SABR_FITS, SUMMARY, as_dates
+from optlab.market.store import (
+    HESTON_FITS,
+    ROUGH_EXPIRIES,
+    ROUGH_FITS,
+    ROUGH_QUOTES,
+    SABR_FITS,
+    SUMMARY,
+    as_dates,
+)
 from optlab.models.heston import HestonParams
+from optlab.models.rough_bergomi import ForwardVariance, RoughBergomiParams
 
 LOCAL_DIR = Path(os.environ.get("MARKET_DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
 REMOTE_URL = os.environ.get(
@@ -78,14 +87,18 @@ def chain(underlying: str, day: date) -> pd.DataFrame:
     return month[month["trade_date"] == day].reset_index(drop=True)
 
 
-@st.cache_data(ttl=6 * 3600, show_spinner=False, max_entries=4)
+@st.cache_resource(ttl=6 * 3600, show_spinner=False, max_entries=8)
 def _fits(relative: str, version: str) -> pd.DataFrame:
+    """One shared copy per table and dataset version (cache_resource doesn't copy on every access the
+    way cache_data does; the quote-level table is ~20 MB). Callers filter it and never modify it."""
     df = _read(relative, version)
-    return (
-        pd.DataFrame(columns=["trade_date", "underlying"])
-        if df is None
-        else as_dates(df, "trade_date", "expiry")
-    )
+    if df is None:
+        return pd.DataFrame(columns=["trade_date", "underlying"])
+    df = as_dates(df, "trade_date", "expiry")
+    for column in ("underlying", "option_type"):
+        if column in df:
+            df[column] = df[column].astype("category")
+    return df
 
 
 def heston_fits(underlying: str) -> pd.DataFrame:
@@ -106,6 +119,32 @@ def sabr_fits(underlying: str, day: date) -> pd.DataFrame:
     if fits.empty:
         return fits
     return fits[(fits["underlying"] == underlying) & (fits["trade_date"] == day)].reset_index(drop=True)
+
+
+def rough_fits(underlying: str = "NIFTY") -> pd.DataFrame:
+    """Every successful daily rough Bergomi fit, oldest first."""
+    fits = _fits(ROUGH_FITS, version())
+    if fits.empty:
+        return fits
+    fits = fits[(fits["underlying"] == underlying) & fits["fitted"].astype(bool)]
+    return fits.sort_values("trade_date").reset_index(drop=True)
+
+
+def rough_model(row) -> tuple[RoughBergomiParams, ForwardVariance]:
+    xi = ForwardVariance(np.asarray(row["xi_times"], dtype=float), np.asarray(row["xi_values"], dtype=float))
+    return RoughBergomiParams(row["H"], row["eta"], row["rho"]), xi
+
+
+def rough_expiries(underlying: str = "NIFTY") -> pd.DataFrame:
+    table = _fits(ROUGH_EXPIRIES, version())
+    return table[table["underlying"] == underlying].reset_index(drop=True) if len(table) else table
+
+
+def rough_quotes(underlying: str, day: date) -> pd.DataFrame:
+    table = _fits(ROUGH_QUOTES, version())
+    if table.empty:
+        return table
+    return table[(table["underlying"] == underlying) & (table["trade_date"] == day)].reset_index(drop=True)
 
 
 def rows_for(underlying: str) -> pd.DataFrame:

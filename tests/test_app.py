@@ -22,19 +22,19 @@ from ui import data
 
 FIXTURES = Path(__file__).parent / "fixtures"
 APP = str(Path(__file__).resolve().parents[1] / "app.py")
-PAGES = ["views/surface.py", "views/history.py", "views/strategy.py", "views/models.py", "views/pricer.py",
-         "views/greeks.py", "views/convergence.py", "views/heston.py"]  # fmt: skip
+PAGES = ["views/surface.py", "views/history.py", "views/strategy.py", "views/models.py", "views/rough.py",
+         "views/pricer.py", "views/greeks.py", "views/convergence.py", "views/heston.py", "views/exotics.py"]  # fmt: skip
 DAYS = (date(2026, 9, 30), date(2026, 10, 1))
 
 
-def build_dataset(root: Path, fitted: bool = True) -> Path:
+def build_dataset(root: Path, fitted: bool = True, models: str = "heston,rough") -> Path:
     raw = nse.parse((FIXTURES / "fo_20261001_subset.csv.zip").read_bytes())
     for day in DAYS:
         raw["trade_date"] = day
         chains, rows = process_day(day, raw, 0.1446)
         store.save(root, chains, rows)
     if fitted:
-        calibrate.main(["--data-dir", str(root)])
+        calibrate.main(["--data-dir", str(root), "--models", models])
     return root
 
 
@@ -52,6 +52,7 @@ def local_data(dataset, monkeypatch):
     # every worker it spawns.
     monkeypatch.setitem(sys.modules, "__main__", sys.modules["__main__"])
     st.cache_data.clear()
+    st.cache_resource.clear()
 
 
 def open_page(page: str) -> AppTest:
@@ -139,7 +140,7 @@ def test_strategy_wing_width_does_not_carry_over_between_underlyings():
 
 
 def test_strategy_uses_the_previous_day_when_the_latest_chain_is_missing(tmp_path, monkeypatch):
-    root = build_dataset(tmp_path / "data")
+    root = build_dataset(tmp_path / "data", models="heston")
     for path in (root / "chains").rglob("2026-10.parquet"):
         path.unlink()  # the summary has 1 Oct, the chain files don't (e.g. a stale cache)
     monkeypatch.setattr(data, "LOCAL_DIR", root)
@@ -166,7 +167,7 @@ def test_offline_the_lab_still_works_and_market_pages_explain(tmp_path, monkeypa
 
 
 def test_local_dataset_never_falls_back_to_github(tmp_path, monkeypatch):
-    root = build_dataset(tmp_path / "data")
+    root = build_dataset(tmp_path / "data", models="heston")
     shutil.rmtree(root / "chains" / "RELIANCE")
     monkeypatch.setattr(data, "LOCAL_DIR", root)
     assert data.chain("RELIANCE", DAYS[-1]).empty  # missing locally, and not fetched remotely
@@ -196,3 +197,32 @@ def test_heston_page_presets_and_monte_carlo():
     assert app.session_state["hs_vol0"] == pytest.approx(100 * np.sqrt(0.0175), abs=0.05)
     assert app.session_state["hs_vol0"] != fitted
     assert any("containing" in c.value for c in app.caption)
+
+
+def test_rough_page_shows_the_fit_and_the_skew_term_structure():
+    app = open_page("views/rough.py")
+    assert 0.01 <= float(metrics(app)["Roughness H"]) <= 0.5
+    skew = json.loads(app.get("plotly_chart")[0].proto.spec)
+    assert [t["name"] for t in skew["data"]] == ["Market (SABR)", "Rough Bergomi", "Heston"]
+    assert skew["layout"]["xaxis"]["type"] == "log" and skew["layout"]["yaxis"]["type"] == "log"
+
+
+def test_exotics_page_prices_under_all_three_models():
+    app = open_page("views/exotics.py")
+    app.selectbox(key="ex_product").set_value("Asian (geometric average)").run()
+    assert not app.exception
+    table = app.dataframe[0].value.set_index("Model")
+    assert list(table.index) == ["Black-Scholes", "Heston", "Rough Bergomi"]
+    bs = table.loc["Black-Scholes"]
+    assert abs(bs["Price"] - bs["Black-Scholes formula"]) < bs["± 95%"] * 2  # 4 standard errors
+    reductions = app.dataframe[1].value.set_index("Method")["Variance reduction"]
+    assert reductions["Sobol + PCA + control variate"] > reductions["Plain Monte Carlo"]
+
+
+def test_exotics_page_barrier_controls():
+    app = open_page("views/exotics.py")
+    app.selectbox(key="ex_product").set_value("Barrier").run()
+    assert not app.exception
+    assert app.segmented_control(key="ex_knock").value == "out"
+    app.segmented_control(key="ex_knock").set_value("in").run()
+    assert not app.exception and len(app.dataframe[0].value) == 3

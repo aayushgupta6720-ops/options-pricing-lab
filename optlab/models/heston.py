@@ -126,3 +126,29 @@ def simulate(S, T, r, q, p: HestonParams, n_paths=50_000, n_steps=100, rng=None)
         log_s += (r - q - 0.5 * positive) * dt + root * z1
         v += p.kappa * (p.theta - positive) * dt + p.xi * root * z2
     return np.exp(log_s)
+
+
+def simulate_paths(S, T, r, q, p: HestonParams, n_paths, n_fixings, substeps=4, rng=None):
+    """Log-spot at n_fixings equally spaced dates (plus today) and the variance integrated over each
+    interval, from the same full-truncation scheme as `simulate`, with `substeps` steps per interval.
+
+    Returns (log_s, integrated_variance) with shapes (n_paths, n_fixings + 1) and (n_paths, n_fixings).
+    """
+    rng = np.random.default_rng(rng)
+    dt = T / (n_fixings * substeps)
+    log_s = np.empty((n_paths, n_fixings + 1))
+    log_s[:, 0] = np.log(S)
+    integrated = np.zeros((n_paths, n_fixings))
+    x, v = log_s[:, 0].copy(), np.full(n_paths, p.v0)
+    tilt = np.sqrt(1.0 - p.rho**2)
+    for i in range(n_fixings):
+        for _ in range(substeps):
+            z1 = rng.standard_normal(n_paths)
+            z2 = p.rho * z1 + tilt * rng.standard_normal(n_paths)
+            positive = np.maximum(v, 0.0)
+            root = np.sqrt(positive * dt)
+            x += (r - q - 0.5 * positive) * dt + root * z1
+            v += p.kappa * (p.theta - positive) * dt + p.xi * root * z2
+            integrated[:, i] += positive * dt
+        log_s[:, i + 1] = x
+    return log_s, integrated

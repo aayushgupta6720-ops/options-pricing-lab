@@ -8,12 +8,33 @@ from ui.theme import Palette, style
 
 LINE = 2
 MARKER = 8
+# Each model keeps one colour on every page. Only the first three palette slots are used, since
+# they're the ones that stay distinguishable in any combination (slot 4, yellow, is too close to
+# orange). Market data and Black-Scholes never share a chart, nor do SABR and rough Bergomi.
+MODEL_SLOTS = {"Market": 0, "Black-Scholes": 0, "SABR": 1, "Rough Bergomi": 1, "Heston": 2}
+
+
+def log_ticks(fig: go.Figure, axis: str, values, suffix=""):
+    """Plain labels on a log axis, instead of Plotly's 2-5-10 minor labels."""
+    values = list(values)
+    labels = [f"{v:,.0f}{suffix}" if v >= 1 else f"{v:g}{suffix}" for v in values]
+    getattr(fig, f"update_{axis}axes")(type="log", tickvals=values, ticktext=labels)
 
 
 def lines(
-    x, series: dict, pal: Palette, x_title="", y_title="", percent_y=False, height=360, hover_format=None
+    x,
+    series: dict,
+    pal: Palette,
+    x_title="",
+    y_title="",
+    percent_y=False,
+    height=360,
+    hover_format=None,
+    slots: list[int] | None = None,
 ) -> go.Figure:
-    """One line per entry of `series` (name -> y values), coloured in fixed slot order."""
+    """One line per entry of `series` (name -> y values), coloured in fixed slot order, or by
+    `slots` when the lines are entities with a colour of their own (a model is always the same
+    colour; see MODEL_SLOTS)."""
     fig = go.Figure()
     fmt = hover_format or (".2%" if percent_y else ",.2f")
     for i, (name, y) in enumerate(series.items()):
@@ -23,7 +44,7 @@ def lines(
                 y=y,
                 name=name,
                 mode="lines",
-                line=dict(color=pal.series[i], width=LINE),
+                line=dict(color=pal.series[slots[i] if slots else i], width=LINE),
                 hovertemplate=f"%{{y:{fmt}}}<extra>{name}</extra>",
             )
         )
@@ -167,7 +188,7 @@ def model_smile(quotes: pd.DataFrame, curves: dict, pal: Palette, fitted=None) -
                 y=vols,
                 name=name,
                 mode="lines",
-                line=dict(color=pal.series[i], width=LINE),
+                line=dict(color=pal.series[MODEL_SLOTS.get(name, i)], width=LINE),
                 hovertemplate=f"Strike %{{x:,.0f}}<br>IV %{{y:.2%}}<extra>{name}</extra>",
             )
         )
@@ -182,6 +203,7 @@ def model_smile(quotes: pd.DataFrame, curves: dict, pal: Palette, fitted=None) -
         q = quotes[mask]
         if q.empty:
             continue
+        detailed = {"close", "n_trades"} <= set(q.columns)
         fig.add_trace(
             go.Scatter(
                 x=q["strike"],
@@ -189,10 +211,13 @@ def model_smile(quotes: pd.DataFrame, curves: dict, pal: Palette, fitted=None) -
                 name=name,
                 mode="markers",
                 marker=dict(size=MARKER, **marker),
-                customdata=np.stack([q["option_type"], q["close"], q["n_trades"]], axis=1),
+                customdata=np.stack(
+                    [q["option_type"], q["close"], q["n_trades"]] if detailed else [q["option_type"]], axis=1
+                ),
                 hovertemplate=(
-                    "Strike %{x:,.0f} %{customdata[0]}<br>IV %{y:.2%}<br>Close ₹%{customdata[1]:,.2f} · "
-                    f"%{{customdata[2]:,}} trades<extra>{name}</extra>"
+                    "Strike %{x:,.0f} %{customdata[0]}<br>IV %{y:.2%}"
+                    + ("<br>Close ₹%{customdata[1]:,.2f} · %{customdata[2]:,} trades" if detailed else "")
+                    + f"<extra>{name}</extra>"
                 ),
             )
         )

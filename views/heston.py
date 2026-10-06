@@ -100,7 +100,15 @@ with c1:
     series = {f"Heston, {round(T * 365)} days": vols}
     if spec.sigma > 0:
         series["Black-Scholes (flat)"] = np.full_like(strikes, spec.sigma)
-    fig = charts.lines(strikes, series, pal, x_title="Strike", y_title="Implied volatility", percent_y=True)
+    fig = charts.lines(
+        strikes,
+        series,
+        pal,
+        x_title="Strike",
+        y_title="Implied volatility",
+        percent_y=True,
+        slots=[charts.MODEL_SLOTS["Heston"], charts.MODEL_SLOTS["Black-Scholes"]][: len(series)],
+    )
     fig.add_vline(x=K, line=dict(color=pal.muted, width=1), annotation_text="Your strike")
     st.plotly_chart(fig, width="stretch")
     st.caption(

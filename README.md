@@ -17,10 +17,12 @@ weekday evening.
 | **Volatility surface** | For any trading day: the smile per expiry, ATM and 25-delta term structure, and a 3D surface. Spot, 30-day ATM vol, 25Δ skew, realized vol and India VIX with day-on-day changes. |
 | **Volatility history** | 30-day implied vs 20-day realized vol vs India VIX, the term structure and skew over time, and how often implied vol overpriced the volatility that followed. |
 | **Model vs market** | Heston (one set of five parameters per day for the whole surface) and SABR (one smile per expiry) fitted to every trading day: the fitted parameters, each model against the market's smile, a heatmap of where Heston misses, SABR's parameters by expiry, and how Heston's parameters moved over two years. |
+| **Rough volatility** | Rough Bergomi against Heston on NIFTY's short expiries: the at-the-money skew against maturity on log-log axes (a power law is a straight line), short-expiry smiles under both models, which model gets the smile's shape right by maturity across two years, and the fitted roughness H over time. |
 | **Strategy payoff** | Multi-leg positions (spreads, straddles, condors, butterflies, or your own legs) on the latest close. Each leg is priced at its strike's implied vol, with P&L in ₹ per lot, breakevens, max profit/loss and position Greeks. |
 | **Pricer** | One option priced by Black-Scholes, a binomial tree and Monte Carlo side by side, with Greeks, the early-exercise premium for American options, and an implied-vol calculator. Loads the latest NIFTY at-the-money option in one click. |
 | **Greeks** | Delta, gamma, vega, theta and rho against spot, volatility or time to expiry. |
 | **Model convergence** | The tree's error against steps (≈1/n) and Monte Carlo's confidence interval against paths (≈1/√n), measured against the exact Black-Scholes price. |
+| **Exotic options** | Asian, barrier and lookback options on the sidebar's option, priced by Monte Carlo under Black-Scholes, Heston and rough Bergomi side by side, with the Black-Scholes closed form as a check, and five variance-reduction methods compared. |
 | **Heston model** | Sliders for Heston's five parameters (preloaded with the latest NIFTY fit) and the smile and at-the-money term structure they produce, the sidebar option's Heston price, and a Monte Carlo check against the formula. |
 
 ## Findings from the data
@@ -70,6 +72,39 @@ call, on every trading day since July 2024:
   implied vol of 52%). In a first run that fitted them too, they caused every one of the worst NIFTY
   fits and pushed κ to its cap on 74% of BANKNIFTY and 87% of RELIANCE days. Both fits now leave them out.
 
+### Rough volatility on NIFTY
+
+Rough Bergomi and Heston fitted each day to the same NIFTY expiries (2 to 91 days, between the 5-delta
+wings), over all 562 days:
+
+- **Rough Bergomi fits the smiles better, most of all the shortest.** Its *shape error* (each expiry's
+  misses after removing their average, the fair comparison since rough Bergomi fits one variance level
+  per expiry) is lower than Heston's on 89% of days: 0.28 against 0.39 vol points for expiries of a week
+  or less (better on 84% of them), 0.17–0.18 against 0.20–0.22 out to three months.
+- **But NIFTY's skew doesn't steepen as fast as rough volatility predicts.** Across 2–91 days the
+  at-the-money skew falls with slope −0.29 in maturity (H ≈ 0.21 read through the power law), and inside
+  two weeks only −0.21, about Heston's −0.20 and well short of rough Bergomi's −0.38. Rough Bergomi's
+  edge comes from each short expiry's smile shape (curvature and wings), not from the term structure of
+  skew.
+- **The fitted roughness is low and noisy.** H has a median of 0.07 (middle half 0.03–0.19), below the
+  0.21 the skew slope implies, and moves a lot day to day. It's higher on stressed days (0.21 in the
+  most volatile tenth against 0.06 on calm ones), when both models fit worse (0.35 and 0.57 points).
+- **The variance-swap replication reproduces India VIX.** The 30-day variance swap from our own strips
+  has a 0.979 correlation with India VIX and sits 0.30 points below it on average (the strip stops at
+  the quoted strikes).
+
+### Exotics
+
+- **Barriers depend on the smile, not just the ATM vol.** On 22-day NIFTY options (5 Oct 2026, the
+  latest Heston and rough Bergomi fits, Black-Scholes at the 14.1% ATM vol), an up-and-out call with its
+  barrier 4.6% above spot is worth ₹109 under Black-Scholes and ₹155 under both Heston and rough Bergomi;
+  a down-and-in put 4.7% below spot ₹159 against ₹205 and ₹198; a floating lookback put ₹593 against
+  ₹525 and ₹538. The two smile-aware models agree within Monte Carlo error; flat volatility is what's
+  off. Asians move much less (3–4%).
+- **Variance reduction changes what's affordable.** For an arithmetic Asian, a geometric-Asian control
+  variate cuts the variance per path by about 1,800×, Sobol points with a principal-component path
+  construction by about 7,600×, and both together by about 200,000× (one path doing the work of 200,000).
+
 | Volatility history (dark theme) | Strategy payoff |
 |---|---|
 | ![History page](docs/screenshots/history-dark.png) | ![Strategy page](docs/screenshots/strategy.png) |
@@ -82,7 +117,8 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
                          ──► optlab/market/chain.py    clean OTM quotes, invert Black-76 → IV
                          ──► optlab/surface.py         ATM / 25Δ / fixed-tenor summary
                          ──► market-data branch        parquet, one file per underlying-month
-                         ──► optlab/calibration.py     Heston per day, SABR per expiry → models/
+                         ──► optlab/calibration.py     Heston per day, SABR per expiry, rough
+                                                       Bergomi per day (NIFTY) → models/
                                      │
                GitHub Actions, weekdays 20:17 IST      ▼
                                               Streamlit app (Render)
@@ -94,9 +130,10 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
   looks back 10 days so a missed day gets filled in by the next run. It tries every calendar date,
   because NSE occasionally trades on a weekend (Budget day 2025 was a Saturday). One failing day
   doesn't stop the others; the run reports it and exits non-zero.
-- **`scripts/calibrate.py`** fits Heston and SABR to every day that doesn't have a fit yet (the
-  whole history takes under two minutes on 8 cores; a new day takes a second), warm-starting each
-  Heston fit from the previous day's.
+- **`scripts/calibrate.py`** fits Heston and SABR (every underlying) and rough Bergomi (NIFTY, by
+  Monte Carlo) to every day that doesn't have a fit yet, warm-starting each from the previous day's.
+  A new day takes about 15 seconds; the whole history about two minutes for Heston and SABR and under
+  70 minutes for rough Bergomi on 8 cores.
 - **`scripts/rebuild_summary.py`** recomputes the daily summary from the stored quotes after a
   change to how it's derived, without downloading anything.
 - **`.github/workflows/ingest.yml`** runs ingest and calibration every weekday evening and commits to the
@@ -105,7 +142,7 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
 
 ## Testing
 
-140 tests run in CI (`ruff` + `pytest`, about 15 seconds, no network):
+208 tests run in CI (`ruff` + `pytest`, about 90 seconds, no network):
 
 - **Models:** Hull's textbook values for prices, Greeks and the 5-step American put; put-call
   parity; tree → Black-Scholes convergence, including the low-vol cases where the tree switches
@@ -116,6 +153,17 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
   limit; Monte Carlo against the formula; SABR's flat, symmetric and ATM limits. Calibration recovers
   known Heston and SABR parameters from synthetic markets, ignores corrupted far-wing quotes, and fits
   a real NIFTY day to under 1.5 points.
+- **Rough Bergomi:** E[S_T] = S₀ and E[V_t] = ξ₀(t); the Volterra process's variance is t^(2H); at
+  H = ½ it's exactly a Brownian motion; the simulated ATM skew falls with slope near H − ½ for H = 0.1
+  and stays flat for H = ½; common random numbers make prices smooth in the parameters. Calibration
+  recovers H, ρ and the forward variance from a synthetic rough market simulated with different
+  random numbers.
+- **Variance swaps:** the replication formula recovers Black-Scholes variance to 0.5% and lands near
+  India VIX on a real day.
+- **Exotics:** Monte Carlo against the closed forms for geometric Asians, floating lookbacks and all
+  eight barrier types; knock-in + knock-out = vanilla; the numba kernels against numpy; Heston and rough
+  Bergomi paths reduce to Black-Scholes in their limits; every variance-reduction method agrees with
+  plain Monte Carlo and the control variates beat it by orders of magnitude.
 - **Implied vol:** round trips over a grid of strikes, maturities and vols; NaN outside
   no-arbitrage bounds.
 - **Pipeline:** parsing a real (trimmed) bhavcopy; NSE's HTTP handling (404 skip, 403 fail-fast,
@@ -163,5 +211,5 @@ git worktree add data market-data
 
 ## Roadmap
 
-- **Exotic options** (Asian, barrier, lookback) on the Monte Carlo engine, with variance reduction
-  (antithetic, control variates, Sobol) and numba speed-ups, priced under Black-Scholes and Heston.
+- Rough Heston (via its fractional Riccati equation) as a second rough model with a semi-closed form.
+- Fitting rough Bergomi to all three underlyings, not just NIFTY.

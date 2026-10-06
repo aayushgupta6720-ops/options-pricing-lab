@@ -140,3 +140,37 @@ def test_fits_leave_out_the_lottery_ticket_wings():
     fit = calibration.fit_sabr_chain(chain)[0]
     assert fit.n_quotes == (~wing).sum()
     assert fit.params.nu == pytest.approx(2.5, rel=1e-3)
+
+
+def test_rough_bergomi_recovers_a_rough_market():
+    from optlab.models import rough_bergomi as rb
+
+    truth = rb.RoughBergomiParams(H=0.12, eta=1.8, rho=-0.6)
+    market = rb.paths(rb.draw(60_000, 60 / 365, rng=99), truth, rb.ForwardVariance.flat(0.15**2))
+
+    def vols(K, T):
+        kind = np.where(K < F, "put", "call")
+        return implied_vol(rb.price(F, K, T, R, market, kind), F, K, T, R, R, kind)
+
+    chain = synthetic_chain(dict.fromkeys((3, 7, 14, 30, 60), vols))
+    fit = calibration.fit_rough_bergomi(chain, n_paths=16_000)  # different random numbers from the market's
+    assert fit.n_expiries == 5
+    assert fit.rmse < 0.003
+    assert fit.params.H == pytest.approx(0.12, abs=0.06)
+    assert fit.params.rho == pytest.approx(-0.6, abs=0.15)
+    np.testing.assert_allclose(np.sqrt(fit.xi.values), 0.15, rtol=0.1)
+    assert (fit.expiries["skew_rough"] < 0).all() and (fit.expiries["skew_market"] < 0).all()
+
+
+def test_rough_bergomi_fits_a_real_nifty_day(nifty):
+    fit = calibration.fit_rough_bergomi(nifty, n_paths=8_000)
+    assert fit.n_expiries == 3  # includes the 5-day weekly, unlike Heston's default window
+    assert fit.rmse < 0.01 and fit.shape_rmse <= fit.rmse
+    assert fit.params.rho < 0
+    assert len(fit.quotes) == fit.n_quotes and fit.quotes["model_iv"].notna().mean() > 0.95
+
+
+def test_shape_error_ignores_level_offsets():
+    misses = pd.Series([0.01, 0.01, 0.01, -0.02, -0.02])
+    expiries = pd.Series(["a", "a", "a", "b", "b"])
+    assert calibration.shape_rmse(misses, expiries) == pytest.approx(0.0, abs=1e-15)

@@ -27,9 +27,11 @@ import pandas as pd
 from scipy.optimize import least_squares
 
 from optlab.implied_vol import implied_vol
-from optlab.models import black_scholes, heston, sabr
+from optlab.models import black_scholes, heston, rough_bergomi, sabr
 from optlab.models.heston import HestonParams
 from optlab.models.sabr import SabrParams
+from optlab.surface import atm_vol
+from optlab.variance import monotone
 
 HESTON_MIN_DAYS = 7
 HESTON_MAX_DAYS = 365
@@ -147,9 +149,9 @@ class _Expiry:
     scale: np.ndarray  # 1 / (vega * sqrt(n)): turns a price error into a weighted vol error
 
 
-def _heston_inputs(chain: pd.DataFrame) -> list[_Expiry]:
+def _price_inputs(chain: pd.DataFrame, min_days: float, max_days: float) -> list[_Expiry]:
     inputs = []
-    for _, q in _usable_expiries(chain, HESTON_MIN_DAYS, HESTON_MAX_DAYS):
+    for _, q in _usable_expiries(chain, min_days, max_days):
         F, T, r = float(q["forward"].iloc[0]), float(q["T"].iloc[0]), float(q["r"].iloc[0])
         K, iv = q["strike"].to_numpy(), q["iv"].to_numpy()
         vega = np.maximum(black_scholes.vega(F, K, T, r, iv, r), 1e-6 * F)
@@ -183,9 +185,14 @@ def _starting_points(expiries: list[_Expiry], chain: pd.DataFrame, previous: Hes
     return [np.clip(s, lo + 1e-6 * (hi - lo), hi - 1e-6 * (hi - lo)) for s in starts]
 
 
-def fit_heston(chain: pd.DataFrame, previous: HestonParams | None = None) -> HestonFit | None:
+def fit_heston(
+    chain: pd.DataFrame,
+    previous: HestonParams | None = None,
+    min_days: float = HESTON_MIN_DAYS,
+    max_days: float = HESTON_MAX_DAYS,
+) -> HestonFit | None:
     """Fit one day's surface; None if fewer than two expiries have enough quotes."""
-    expiries = _heston_inputs(chain)
+    expiries = _price_inputs(chain, min_days, max_days)
     if len(expiries) < 2:
         return None
     best = None
@@ -209,7 +216,7 @@ def fit_heston(chain: pd.DataFrame, previous: HestonParams | None = None) -> Hes
     if best is None:
         return None
     params = HestonParams(*best.x)
-    fitted = pd.concat([q for _, q in _usable_expiries(chain, HESTON_MIN_DAYS, HESTON_MAX_DAYS)])
+    fitted = pd.concat([q for _, q in _usable_expiries(chain, min_days, max_days)])
     errors = heston_vols(fitted, params) - fitted["iv"].to_numpy()
     rmse = float(np.sqrt(np.nanmean(errors**2)))
     return HestonFit(params, rmse, len(fitted), len(expiries), float(best.cost))
@@ -225,3 +232,180 @@ def heston_vols(chain: pd.DataFrame, params: HestonParams) -> np.ndarray:
         model = heston.price(F, q["strike"].to_numpy(), T, r, params, kinds)
         out[q["_pos"].to_numpy()] = implied_vol(model, F, q["strike"].to_numpy(), T, r, r, kinds)
     return out
+
+
+# --- Rough Bergomi --------------------------------------------------------------------------
+
+ROUGH_MIN_DAYS = 2
+ROUGH_MAX_DAYS = 91
+ROUGH_PATHS = 20_000
+ROUGH_SEED = 2026  # the same random numbers for every fit, so fits are comparable day to day
+ROUGH_BOUNDS = (np.array([0.01, 0.1, -0.99]), np.array([0.5, 5.0, 0.5]))  # H, eta, rho
+ROUGH_STARTS = ((0.1, 1.5, -0.7), (0.3, 1.0, -0.5))
+LOG_XI_BOUNDS = (np.log(1e-4), np.log(1.0))
+
+
+@dataclass(frozen=True)
+class RoughFit:
+    params: rough_bergomi.RoughBergomiParams
+    xi: rough_bergomi.ForwardVariance
+    rmse: float
+    shape_rmse: float  # RMSE after removing each expiry's average miss: the smile's shape alone
+    n_quotes: int
+    n_expiries: int
+    cost: float
+    quotes: pd.DataFrame  # the fitted quotes, with the model's implied vol in "model_iv"
+    expiries: pd.DataFrame  # per expiry: T, forward, r, atm_vol, skew_market (SABR), skew_rough
+
+
+def shape_rmse(misses: pd.Series, expiries: pd.Series) -> float:
+    """RMSE of model-minus-market vols after subtracting each expiry's mean miss."""
+    centred = misses - misses.groupby(expiries.to_numpy()).transform("mean").to_numpy()
+    return float(np.sqrt(np.nanmean(centred**2)))
+
+
+def _atm_forward_variance(chain: pd.DataFrame, times: np.ndarray, min_days, max_days) -> np.ndarray:
+    """Starting forward variances between the fitted expiries, from their ATM vols."""
+    total = []
+    for _, q in _usable_expiries(chain, min_days, max_days):
+        vol = atm_vol(q)
+        total.append((vol if np.isfinite(vol) else float(q["iv"].median())) ** 2 * float(q["T"].iloc[0]))
+    total = monotone(np.array(total), np.ones(len(total)))
+    steps = np.diff(np.concatenate([[0.0], total])) / np.diff(np.concatenate([[0.0], times]))
+    return np.clip(steps, np.exp(LOG_XI_BOUNDS[0]) * 1.01, np.exp(LOG_XI_BOUNDS[1]) * 0.99)
+
+
+def fit_rough_bergomi(
+    chain: pd.DataFrame,
+    previous: rough_bergomi.RoughBergomiParams | None = None,
+    n_paths: int = ROUGH_PATHS,
+    min_days: float = ROUGH_MIN_DAYS,
+    max_days: float = ROUGH_MAX_DAYS,
+) -> RoughFit | None:
+    """Fit rough Bergomi to one day's expiries from min_days to max_days.
+
+    Free parameters: H, eta and rho, plus the forward variance curve xi0(t), one level per interval
+    between expiries (started from the ATM term structure). Variance swaps replicated from the quoted
+    strikes would pin xi0 down without fitting, but they were too noisy expiry by expiry: the
+    strip for a one-week expiry picks up the lottery-ticket wings, and a thinly quoted expiry's strip
+    stops short. Prices come from Monte Carlo with the same random numbers at every step of the
+    optimiser and on every day; residuals are the same vega-weighted price errors as Heston's.
+    """
+    expiries = sorted(_price_inputs(chain, min_days, max_days), key=lambda e: e.T)
+    if len(expiries) < 2:
+        return None
+    times = np.array([e.T for e in expiries])
+    log_xi0 = np.log(_atm_forward_variance(chain, times, min_days, max_days))
+    normals = rough_bergomi.draw(n_paths, times[-1], rng=ROUGH_SEED)
+    cache: dict = {}
+
+    def unpack(x):
+        return rough_bergomi.RoughBergomiParams(*x[:3]), rough_bergomi.ForwardVariance(times, np.exp(x[3:]))
+
+    def residuals(x):
+        sim = rough_bergomi.paths(normals, *unpack(x), cache=cache)
+        return np.concatenate(
+            [(rough_bergomi.price(e.F, e.K, e.T, e.r, sim, e.kind) - e.price) * e.scale for e in expiries]
+        )
+
+    lower = np.concatenate([ROUGH_BOUNDS[0], np.full(len(times), LOG_XI_BOUNDS[0])])
+    upper = np.concatenate([ROUGH_BOUNDS[1], np.full(len(times), LOG_XI_BOUNDS[1])])
+    starts = [np.concatenate([s, log_xi0]) for s in ROUGH_STARTS]
+    if previous is not None:
+        starts = [np.concatenate([[previous.H, previous.eta, previous.rho], log_xi0]), starts[0]]
+    best = None
+    for start in starts:
+        start = np.clip(start, lower + 1e-3 * (upper - lower), upper - 1e-3 * (upper - lower))
+        result = least_squares(
+            residuals,
+            start,
+            bounds=(lower, upper),
+            method="trf",
+            diff_step=1e-3,
+            xtol=1e-6,
+            ftol=1e-8,
+            max_nfev=50,
+        )
+        if np.isfinite(result.cost) and (best is None or result.cost < best.cost):
+            best = result
+    if best is None:
+        return None
+    params, xi = unpack(best.x)
+    fitted = pd.concat([q for _, q in _usable_expiries(chain, min_days, max_days)])
+    sim = rough_bergomi.paths(normals, params, xi)
+    fitted = fitted.assign(model_iv=rough_vols(fitted, sim))
+    misses = fitted["model_iv"] - fitted["iv"]
+    rmse = float(np.sqrt(np.nanmean(misses**2)))
+    return RoughFit(
+        params,
+        xi,
+        rmse,
+        shape_rmse(misses, fitted["expiry"]),
+        len(fitted),
+        len(expiries),
+        float(best.cost),
+        fitted,
+        _expiry_skews(fitted, sim),
+    )
+
+
+def _expiry_skews(fitted: pd.DataFrame, sim) -> pd.DataFrame:
+    """ATM level and skew per expiry: the market's from a SABR fit to its quotes, rough Bergomi's
+    from the simulated paths (the same paths for both strikes, so the difference isn't noise)."""
+    rows = []
+    for expiry, q in fitted.groupby("expiry"):
+        F, T, r = float(q["forward"].iloc[0]), float(q["T"].iloc[0]), float(q["r"].iloc[0])
+        level = atm_vol(q)
+        level = level if np.isfinite(level) else float(q["iv"].median())
+        smile = fit_sabr(q)
+
+        def rough_at(k, F=F, T=T, r=r):
+            K, kinds = F * np.exp(k), np.where(k < 0, "put", "call")
+            return implied_vol(rough_bergomi.price(F, K, T, r, sim, kinds), F, K, T, r, r, kinds)
+
+        def sabr_at(k, F=F, T=T, smile=smile):
+            return sabr.implied_vol(F, F * np.exp(k), T, smile.params)
+
+        rows.append(
+            {
+                "expiry": expiry,
+                "T": T,
+                "forward": F,
+                "r": r,
+                "atm_vol": level,
+                "skew_market": atm_skew(sabr_at, T, level) if smile else np.nan,
+                "skew_rough": atm_skew(rough_at, T, level),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def heston_skew(params: HestonParams, F: float, T: float, r: float, level: float) -> float:
+    """Heston's ATM skew by the same central difference as the others."""
+
+    def vols(k):
+        K, kinds = F * np.exp(k), np.where(k < 0, "put", "call")
+        return implied_vol(heston.price(F, K, T, r, params, kinds), F, K, T, r, r, kinds)
+
+    return atm_skew(vols, T, level)
+
+
+def rough_vols(chain: pd.DataFrame, sim) -> np.ndarray:
+    """Black-76 implied vols of simulated rough Bergomi prices for every quote in the chain."""
+    out = np.full(len(chain), np.nan)
+    for _, q in chain.assign(_pos=np.arange(len(chain))).groupby("expiry"):
+        F, T, r = float(q["forward"].iloc[0]), float(q["T"].iloc[0]), float(q["r"].iloc[0])
+        K, kinds = q["strike"].to_numpy(), q["option_type"].to_numpy()
+        model = rough_bergomi.price(F, K, T, r, sim, kinds)
+        out[q["_pos"].to_numpy()] = implied_vol(model, F, K, T, r, r, kinds)
+    return out
+
+
+def atm_skew(vol_at, T: float, atm_vol: float) -> float:
+    """dsigma / d ln K at the money by a central difference over +/- a quarter standard deviation.
+
+    vol_at(log_moneyness_array) -> vols. Negative when puts are dearer than calls.
+    """
+    h = 0.25 * atm_vol * np.sqrt(T)
+    lo, hi = vol_at(np.array([-h, h]))
+    return float((hi - lo) / (2 * h))

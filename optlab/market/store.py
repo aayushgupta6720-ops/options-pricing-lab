@@ -4,6 +4,7 @@
     <root>/chains/<UNDERLYING>/<YYYY-MM>.parquet   that month's implied-vol chains
     <root>/models/heston.parquet                   one Heston fit per underlying per day
     <root>/models/sabr.parquet                     one SABR fit per underlying, day and expiry
+    <root>/models/rough_bergomi*.parquet           rough Bergomi fits (NIFTY): per day, per expiry, per quote
 
 Writes are idempotent: saving a day replaces any rows already stored for it, so a re-run or a
 backfill over existing data never duplicates anything. In production <root> is a checkout of the
@@ -20,6 +21,9 @@ import pandas as pd
 SUMMARY = "summary.parquet"
 HESTON_FITS = "models/heston.parquet"
 SABR_FITS = "models/sabr.parquet"
+ROUGH_FITS = "models/rough_bergomi.parquet"
+ROUGH_EXPIRIES = "models/rough_bergomi_expiries.parquet"
+ROUGH_QUOTES = "models/rough_bergomi_quotes.parquet"
 REALIZED_WINDOW = 20  # trading days
 # No index or large-cap stock moves this much in a day (|log return|), so a move this big that
 # comes with a matching lot-size change is a bonus issue or split, not a price move.
