@@ -5,8 +5,9 @@ volatility surface for NIFTY, BANKNIFTY and RELIANCE, rebuilt from NSE's officia
 with a history back to July 2024.
 
 **Live demo:** https://options-pricing-lab.onrender.com. It runs on Render's free plan, which sleeps
-after 15 minutes idle, so the first visit can take about a minute to wake up. The data updates every
-weekday evening.
+after 15 minutes idle, so the first visit can take about a minute to wake up. The option data updates
+every weekday evening; the Option pricer and Strategy builder use the live index level during market
+hours.
 
 ![Implied volatility page](docs/screenshots/surface.png)
 
@@ -19,8 +20,8 @@ own link, e.g. [/pricer?tab=Convergence](https://options-pricing-lab.onrender.co
 |---|---|
 | **Implied volatility** | *Surface:* for any trading day, the smile per expiry, the at-the-money and 25-delta term structure, and a 3D surface, with spot, 30-day implied vol, 30-day skew, realized vol and India VIX and their day-on-day changes. *History:* 30-day implied vs 20-day realized vol vs India VIX, the term structure and skew over time, and how often implied vol overpriced the volatility that followed. |
 | **Models vs market** | *Heston & SABR:* Heston (one set of five parameters per day for the whole surface) and SABR (one smile per expiry) fitted to every trading day: the fitted parameters, each model against the market's smile, a heatmap of where Heston misses, SABR's parameters by expiry, and how Heston's parameters moved over two years. *Rough volatility:* rough Bergomi against Heston on NIFTY's short expiries: the at-the-money skew against maturity on log-log axes (a power law is a straight line), short-expiry smiles under both models, which model gets the smile's shape right by maturity, and the fitted roughness H over time. |
-| **Strategy builder** | Multi-leg positions (spreads, straddles, condors, butterflies, or your own legs) on the latest close. Each leg is priced at its strike's implied vol, with P&L in ₹ per lot, breakevens, max profit/loss and position Greeks. |
-| **Option pricer** | One option, set in the sidebar or loaded from the latest NIFTY close in one click. *Prices:* Black-Scholes, a binomial tree and Monte Carlo side by side, Greeks, the early-exercise premium for American options, and an implied-vol calculator. *Greeks:* each Greek against spot, volatility or time to expiry. *Convergence:* the tree's error against steps (≈1/n) and Monte Carlo's confidence interval against paths (≈1/√n). *Heston model:* sliders for Heston's five parameters (preloaded with the latest NIFTY fit), the smile and term structure they produce, and a Monte Carlo check against the formula. |
+| **Strategy builder** | Multi-leg positions (spreads, straddles, condors, butterflies, or your own legs) at the live price, or the last close when there's nothing newer. Each leg is priced at its strike's implied vol, with P&L in ₹ per lot, breakevens, max profit/loss and position Greeks. |
+| **Option pricer** | One option, set in the sidebar or loaded in one click as the at-the-money NIFTY option at the live index level. *Prices:* Black-Scholes, a binomial tree and Monte Carlo side by side, Greeks, the early-exercise premium for American options, and an implied-vol calculator. *Greeks:* each Greek against spot, volatility or time to expiry. *Convergence:* the tree's error against steps (≈1/n) and Monte Carlo's confidence interval against paths (≈1/√n). *Heston model:* sliders for Heston's five parameters (preloaded with the latest NIFTY fit), the smile and term structure they produce, and a Monte Carlo check against the formula. |
 | **Exotic options** | Asian, barrier and lookback options on the sidebar's option, priced by Monte Carlo under Black-Scholes, Heston and rough Bergomi side by side, with the Black-Scholes closed form as a check, and five variance-reduction methods compared. |
 
 Labels use plain names (mean reversion, vol of vol); the symbols and the method behind each chart
@@ -138,12 +139,18 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
 - **`scripts/rebuild_summary.py`** recomputes the daily summary from the stored quotes after a
   change to how it's derived, without downloading anything.
 - **`.github/workflows/ingest.yml`** runs ingest and calibration every weekday evening and commits to the
-  `market-data` branch. The app reads that branch, so it never calls NSE itself.
+  `market-data` branch. The app reads its end-of-day data from that branch.
+- **`optlab/market/live.py`** is the one live call: the index level from NSE's website API, else
+  Yahoo Finance (the only source for RELIANCE, as NSE refuses scripts its stock quotes). The app asks
+  at most once a minute per underlying, leaves a source alone for 10 minutes after it refuses, and
+  uses the price only when it's later than the last close in the dataset; otherwise, and whenever
+  neither source answers, it falls back to that close. A live option takes its vol from the last
+  close's smile at the same moneyness, and the Option pricer and Strategy builder say so.
 - The maths, and what each piece is checked against, is in [docs/models.md](docs/models.md).
 
 ## Testing
 
-212 tests run in CI (`ruff` + `pytest`, about 90 seconds, no network):
+221 tests run in CI (`ruff` + `pytest`, about 90 seconds, no network):
 
 - **Models:** Hull's textbook values for prices, Greeks and the 5-step American put; put-call
   parity; tree → Black-Scholes convergence, including the low-vol cases where the tree switches
@@ -167,6 +174,9 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
   plain Monte Carlo and the control variates beat it by orders of magnitude.
 - **Implied vol:** round trips over a grid of strikes, maturities and vols; NaN outside
   no-arbitrage bounds.
+- **Live prices:** NSE first and Yahoo as the fallback, timestamps in IST, a refusing source (403,
+  429, an HTML page instead of JSON) resting, and the app ignoring live prices that are no newer than
+  the close or implausibly far from it. The Strategy builder keeps the price it took until Refresh.
 - **Pipeline:** parsing a real (trimmed) bhavcopy; NSE's HTTP handling (404 skip, 403 fail-fast,
   429/5xx retry, HTML-instead-of-zip); parity forwards within 10 bp of the futures; recovering a
   known smile from synthetic prices; the ATM gap gate and order-independent 25-delta vols;

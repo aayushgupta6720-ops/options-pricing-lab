@@ -7,7 +7,7 @@ instead of the local dataset would fail.
 import json
 import shutil
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +15,7 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from optlab.market import nse, store
+from optlab.market import live, nse, store
 from scripts import calibrate
 from scripts.ingest import process_day
 from ui import data
@@ -50,6 +50,7 @@ def dataset(tmp_path_factory):
 def local_data(dataset, monkeypatch):
     monkeypatch.setattr(data, "LOCAL_DIR", dataset)
     monkeypatch.setattr(data, "REMOTE_URL", "http://127.0.0.1:9")
+    monkeypatch.setattr(data, "LIVE_PRICES", False)  # tests that want a live price use serve_live()
     # AppTest swaps sys.modules["__main__"] for the app script and leaves it there. A process pool
     # started later in the same session (scripts/calibrate.py's tests) would then re-run app.py in
     # every worker it spawns.
@@ -66,6 +67,22 @@ def open_page(page: str, tab: str | None = None) -> AppTest:
     app.run()
     assert not app.exception, app.exception[0].value if app.exception else ""
     return app
+
+
+def serve_live(monkeypatch, move: float = 0.02, when: datetime = datetime(2026, 10, 2, 11, 5)):
+    """Live prices `move` above each underlying's last close in the dataset (1 Oct), timed `when` IST."""
+    monkeypatch.setattr(data, "LIVE_PRICES", True)
+
+    def latest(underlying):
+        close = float(data.latest_chain(underlying)[1]["spot"].iloc[0])
+        return live.Quote(underlying, close * (1 + move), when.replace(tzinfo=live.IST), "NSE")
+
+    monkeypatch.setattr(data.live, "latest", latest)
+    st.cache_data.clear()
+
+
+def captions(app: AppTest, text: str) -> list[str]:
+    return [c.value for c in app.caption if text in c.value]
 
 
 def metrics(app: AppTest) -> dict:
@@ -177,7 +194,7 @@ def test_strategy_wing_width_does_not_carry_over_between_underlyings():
     assert not app.exception
     reliance_width = app.number_input(key="strategy_width_RELIANCE").value
     assert reliance_width < nifty_width / 5
-    assert "nan" not in metrics(app)["Net premium"]
+    assert "nan" not in metrics(app)["Net premium received"]
 
 
 def test_strategy_uses_the_previous_day_when_the_latest_chain_is_missing(tmp_path, monkeypatch):
@@ -186,7 +203,7 @@ def test_strategy_uses_the_previous_day_when_the_latest_chain_is_missing(tmp_pat
         path.unlink()  # the summary has 1 Oct, the chain files don't (e.g. a stale cache)
     monkeypatch.setattr(data, "LOCAL_DIR", root)
     app = open_page(STRATEGY)
-    assert "30 Sep 2026" in app.caption[-1].value
+    assert captions(app, "30 Sep 2026")
 
 
 def test_market_pages_say_when_an_underlying_has_no_data(monkeypatch):
@@ -267,3 +284,44 @@ def test_exotics_page_barrier_controls():
     assert app.segmented_control(key="ex_knock").value == "out"
     app.segmented_control(key="ex_knock").set_value("in").run()
     assert not app.exception and len(app.dataframe[0].value) == 3
+
+
+def test_pricer_loads_the_live_at_the_money_option(monkeypatch):
+    serve_live(monkeypatch, move=0.02)
+    app = open_page(PRICER)
+    close = float(data.latest_chain("NIFTY")[1]["spot"].iloc[0])
+    ss = app.session_state
+    assert ss["in_S"] == pytest.approx(close * 1.02)
+    assert ss["in_K"] > close * 1.01  # the strike follows the live price
+    label = captions(app.sidebar, "live from NSE")[0]  # "Loaded NIFTY 23,300 call, 27 Oct 2026 at ..."
+    expiry = datetime.strptime(label.split(", ")[1][:11], "%d %b %Y").date()
+    assert ss["in_days"] == (expiry - date(2026, 10, 2)).days
+    assert "NSE close" not in metrics(app)  # no closing price to compare a live option with
+    assert not app.exception
+
+
+@pytest.mark.parametrize(
+    "move, when",
+    [(0.02, datetime(2026, 10, 1, 15, 30)), (0.5, datetime(2026, 10, 2, 11, 5))],
+    ids=["same day", "implausible"],
+)
+def test_live_prices_that_add_nothing_are_ignored(monkeypatch, move, when):
+    serve_live(monkeypatch, move, when)
+    app = open_page(PRICER)
+    assert "NSE close" in metrics(app) and not captions(app.sidebar, "live from")
+
+
+def test_strategy_centres_on_the_live_price_and_keeps_it_until_refreshed(monkeypatch):
+    serve_live(monkeypatch, move=0.03)
+    app = open_page(STRATEGY)
+    close = float(data.latest_chain("NIFTY")[1]["spot"].iloc[0])
+    assert captions(app, f"NIFTY {close * 1.03:,.2f}, live from NSE")
+    strikes = app.dataframe[0].value["Strike"]
+    assert strikes.mean() > close * 1.015  # the iron condor is centred on the live price
+    assert "nan" not in metrics(app)["Net premium received"]
+
+    serve_live(monkeypatch, move=0.04)
+    app.slider[0].set_value(1).run()  # any interaction: the price stays the one first taken
+    assert captions(app, f"NIFTY {close * 1.03:,.2f}, live from NSE")
+    app.button(key="strategy_refresh").click().run()
+    assert captions(app, f"NIFTY {close * 1.04:,.2f}, live from NSE") and not app.exception

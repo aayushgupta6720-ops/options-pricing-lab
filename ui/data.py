@@ -9,6 +9,9 @@ Caching: the summary is cached for an hour, and each chain file is cached under 
 version (the latest trade date in that summary). So once the summary shows a new day, chains are
 fetched afresh rather than served from an older cache entry, and the request carries the version
 as a query string so GitHub's CDN doesn't hand back a stale copy either.
+
+The dataset is end-of-day. Live prices (optlab/market/live.py) are cached for a minute and only
+used when they're later than its last close; LIVE_PRICES=0 turns them off.
 """
 
 import io
@@ -22,6 +25,7 @@ import requests
 import streamlit as st
 
 from optlab import config
+from optlab.market import live
 from optlab.market.store import (
     HESTON_FITS,
     ROUGH_EXPIRIES,
@@ -39,6 +43,8 @@ REMOTE_URL = os.environ.get(
     "MARKET_DATA_URL", "https://raw.githubusercontent.com/aayushgupta6720-ops/options-pricing-lab/market-data"
 )
 UNDERLYINGS = config.UNDERLYINGS
+LIVE_PRICES = os.environ.get("LIVE_PRICES", "1") != "0"
+MAX_LIVE_MOVE = 0.2  # NSE halts index trading at a 20% move, so anything further is a bad price
 
 
 class DataUnavailable(Exception):
@@ -166,6 +172,23 @@ def latest_chain(underlying: str, lookback: int = 5) -> tuple[date | None, pd.Da
     return None, pd.DataFrame()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _live_quote(underlying: str) -> live.Quote | None:
+    return live.latest(underlying)
+
+
+def live_spot(underlying: str, close_day: date, close: float) -> live.Quote | None:
+    """The live price, if it's later than the dataset's last close: during the session, and after it
+    until that evening's data lands. None otherwise, when no source answers, or when the price is
+    implausibly far from the close."""
+    if not LIVE_PRICES:
+        return None
+    quote = _live_quote(underlying)
+    if quote is None or quote.time.date() <= close_day or abs(np.log(quote.price / close)) > MAX_LIVE_MOVE:
+        return None
+    return quote
+
+
 def load_or_stop(fn, *args):
     """Call a data function; if the dataset can't be reached, say so on the page and stop."""
     try:
@@ -179,27 +202,55 @@ def load_or_stop(fn, *args):
 
 
 def market_option(underlying: str = "NIFTY", min_days: int = 20) -> dict | None:
-    """Inputs for the at-the-money option on the first expiry at least `min_days` out, latest day.
+    """Inputs for the at-the-money option on the first expiry at least `min_days` out.
 
-    The dividend yield is backed out of the forward: F = S exp((r - q) T).
+    At the live price when there's one later than the dataset's last close (live_spot), else at
+    that close, with the option's closing price to compare against. The dividend yield is backed out
+    of the close's forward: F = S exp((r - q) T). With a live price, the strike is the listed one
+    nearest the live forward and the vol is the close's smile at that moneyness, so the at-the-money
+    vol moves along with the market (sticky moneyness).
     """
     day, ch = latest_chain(underlying)
-    ch = ch[ch["T"] * 365 >= min_days] if len(ch) else ch
+    if ch.empty:
+        return None
+    quote = live_spot(underlying, day, float(ch["spot"].iloc[0]))
+    today = quote.time.date() if quote else day
+    ch = ch[ch["expiry"].map(lambda e: (e - today).days) >= min_days]
     if ch.empty:
         return None
     ch = ch[ch["expiry"] == ch["expiry"].min()]
-    atm = ch.iloc[(ch["log_moneyness"]).abs().argsort().iloc[0]]
-    S, F, T, r = float(atm["spot"]), float(atm["forward"]), float(atm["T"]), float(atm["r"])
-    return {
-        "label": f"{underlying} {atm['strike']:,.0f} {atm['option_type']}, {atm['expiry']:%d %b %Y}",
-        "S": S,
-        "K": float(atm["strike"]),
-        "days": round(T * 365),
-        "sigma": float(atm["iv"]),
-        "r": r,
-        "q": r - np.log(F / S) / T,
-        "kind": str(atm["option_type"]),
-        "market_price": float(atm["close"]),
-        "as_of": day,
-        "lot_size": int(atm["lot_size"]),
+    expiry = ch["expiry"].iloc[0]
+    S, F, T, r = (float(ch[c].iloc[0]) for c in ("spot", "forward", "T", "r"))
+    q = r - np.log(F / S) / T
+    common = {"r": r, "q": q, "as_of": day, "lot_size": int(ch["lot_size"].iloc[0])}
+    if quote is None:
+        atm = ch.iloc[ch["log_moneyness"].abs().argsort().iloc[0]]
+        label = f"{underlying} {atm['strike']:,.0f} {atm['option_type']}, {expiry:%d %b %Y}"
+        return common | {
+            "label": label,
+            "S": S,
+            "K": float(atm["strike"]),
+            "days": round(T * 365),
+            "sigma": float(atm["iv"]),
+            "kind": str(atm["option_type"]),
+            "market_price": float(atm["close"]),
+            "note": f"Loaded {label} (close ₹{atm['close']:,.2f} on {day:%d %b %Y}).",
+        }
+    days = (expiry - today).days
+    F = quote.price * np.exp((r - q) * days / 365)
+    strikes = np.sort(ch["strike"].unique())
+    K = float(strikes[np.abs(strikes - F).argmin()])
+    kind = "call" if K >= F else "put"
+    smile = ch.sort_values("log_moneyness")
+    label = f"{underlying} {K:,.0f} {kind}, {expiry:%d %b %Y}"
+    return common | {
+        "label": label,
+        "S": quote.price,
+        "K": K,
+        "days": days,
+        "sigma": float(np.interp(np.log(K / F), smile["log_moneyness"], smile["iv"])),
+        "kind": kind,
+        "live": quote,
+        "note": f"Loaded {label} at {underlying} {quote.price:,.2f}, live from {quote.source} at "
+        f"{quote.time:%H:%M} IST on {quote.time:%d %b}. Vol from the {day:%d %b} close's smile.",
     }

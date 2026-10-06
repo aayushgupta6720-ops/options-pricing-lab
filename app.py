@@ -52,6 +52,7 @@ def load_inputs(values: dict):
     # Remember exactly what was loaded, so the Pricer only compares with the market close while
     # the inputs are still that option's.
     st.session_state["market"] = {**values, "inputs": inputs} if "market_price" in values else None
+    st.session_state["loaded"] = values.get("note")
 
 
 def latest_market_option() -> dict | None:
@@ -69,7 +70,11 @@ if page.title in {p.title for p in LAB}:
     with st.sidebar:
         st.markdown("### Option")
         c1, c2 = st.columns(2)
-        if c1.button("NIFTY ATM", help="The latest at-the-money NIFTY option, first expiry 20+ days out."):
+        if c1.button(
+            "NIFTY ATM",
+            help="The at-the-money NIFTY option, first expiry 20+ days out, at the live index level (from NSE, "
+            "else Yahoo Finance) or, when there's nothing newer, the last close.",
+        ):
             market = latest_market_option()
             if market:
                 load_inputs(market)
@@ -106,11 +111,8 @@ if page.title in {p.title for p in LAB}:
             )
         if st.session_state.get("in_style") == "american":
             st.caption("American exercise (set under Rate, dividend, exercise).")
-        market = st.session_state.get("market")
-        if market:
-            st.caption(
-                f"Loaded {market['label']} (close ₹{market['market_price']:,.2f} on {market['as_of']:%d %b %Y})"
-            )
+        if st.session_state.get("loaded"):
+            st.caption(st.session_state["loaded"])
 
     ss = st.session_state
     st.session_state["spec"] = OptionSpec(
