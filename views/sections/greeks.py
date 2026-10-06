@@ -7,11 +7,7 @@ from ui import charts, theme
 spec = st.session_state["spec"]
 pal = theme.current()
 
-st.title("Greeks")
-st.caption(
-    "How each sensitivity changes with spot, volatility or time, from the Black-Scholes formulas "
-    "(European exercise). Inputs are in the sidebar."
-)
+st.caption("How each sensitivity changes with spot, volatility or time (Black-Scholes, European exercise).")
 
 # name -> (display scale, unit label)
 GREEKS = {

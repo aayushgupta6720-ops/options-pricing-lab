@@ -6,13 +6,10 @@ import streamlit as st
 from optlab.market.store import REALIZED_WINDOW
 from ui import charts, data, theme
 
-st.title("Volatility history")
-st.caption("One point per trading day from the daily snapshots, back to July 2024.")
-
 RANGES = {"3 months": 91, "6 months": 182, "1 year": 365, "All": None}
-c1, c2, _ = st.columns([1, 2, 1])
-underlying = c1.selectbox("Underlying", data.UNDERLYINGS, key="history_underlying")
-span = c2.segmented_control("Range", list(RANGES), default="1 year", required=True, key="history_range")
+underlying = st.session_state["vol_underlying"]  # chosen above the tabs (views/volatility.py)
+span = st.segmented_control("Range", list(RANGES), default="1 year", required=True, key="history_range")
+st.caption("One point per trading day, back to July 2024.")
 
 rows = data.load_or_stop(data.rows_for, underlying)
 if rows.empty:
@@ -26,7 +23,7 @@ pal = theme.current()
 x = pd.to_datetime(rows["trade_date"])
 
 st.subheader("Implied vs realized")
-series = {"30-day ATM implied": rows["atm_iv_30d"], "20-day realized": rows["rv_20d"]}
+series = {"30-day implied": rows["atm_iv_30d"], "20-day realized": rows["rv_20d"]}
 if underlying == "NIFTY":
     series["India VIX"] = rows["india_vix"]
 st.plotly_chart(
@@ -43,29 +40,31 @@ if len(paired) >= 20:
         help="How often 30-day implied vol exceeded the realized vol over the next 20 trading days.",
     )
     c2.metric(
-        "Average gap", f"{100 * premium.mean():+.2f} pts", help="Implied minus subsequently realized vol."
+        "Average gap",
+        f"{100 * premium.mean():+.2f} vol pts",
+        help="30-day implied vol minus the realized vol over the next 20 trading days.",
     )
     c3.metric("Days compared", f"{len(paired):,}")
     st.caption(
-        "Option sellers are usually paid a premium for bearing volatility risk, so implied vol tends to sit above "
-        "the volatility that's later realized. The last 20 days aren't compared yet: their future isn't known."
+        "Option sellers are usually paid for bearing volatility risk, so implied vol tends to sit above the "
+        "volatility that follows. The last 20 days aren't compared yet: what follows them isn't known."
     )
 
 c1, c2 = st.columns(2)
 with c1:
-    st.subheader("Term structure")
+    st.subheader("Term structure", help="At-the-money implied vol at fixed maturities.")
     st.plotly_chart(
         charts.lines(
             x,
             {"7-day": rows["atm_iv_7d"], "30-day": rows["atm_iv_30d"], "90-day": rows["atm_iv_90d"]},
             pal,
-            y_title="ATM implied vol",
+            y_title="At-the-money implied vol",
             percent_y=True,
         ),
         width="stretch",
     )
 with c2:
-    st.subheader("25-delta skew (30-day)")
+    st.subheader("Skew (30-day)", help="25-delta put vol minus 25-delta call vol, 30 days out.")
     st.plotly_chart(
         charts.lines(
             x, {"Put minus call vol": rows["skew_25d_30d"]}, pal, y_title="Vol points", percent_y=True

@@ -5,16 +5,13 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from optlab.calibration import ROUGH_MAX_DAYS, ROUGH_MIN_DAYS
+from optlab.calibration import MIN_ABS_DELTA, ROUGH_MAX_DAYS, ROUGH_MIN_DAYS, ROUGH_PATHS
 from ui import charts, data, theme
 
-st.title("Rough volatility")
 st.caption(
-    "Rough volatility models such as rough Bergomi make the at-the-money skew keep steepening as maturity shrinks, "
-    "like T^(H − ½); in classical ones like Heston it levels off. Both are fitted here to the same NIFTY "
-    f"expiries, {ROUGH_MIN_DAYS} to {ROUGH_MAX_DAYS} days out, between the 5-delta wings, to see which describes "
-    "the market better and where. The fits run in the daily job (rough Bergomi by Monte Carlo); this page only "
-    "reads them."
+    "In a rough volatility model (rough Bergomi) the at-the-money skew keeps steepening as expiries get shorter; in "
+    f"Heston it levels off. Both are fitted to NIFTY's expiries {ROUGH_MIN_DAYS} to {ROUGH_MAX_DAYS} days out to see "
+    "which matches the market. Roughness H runs from 0.5 (a classical model) down towards 0 (very rough)."
 )
 
 fits = data.load_or_stop(data.rough_fits, "NIFTY")
@@ -33,16 +30,24 @@ k = st.columns(3)
 k[0].metric(
     "Roughness H", f"{fit['H']:.2f}", help="Hurst exponent: 0.5 is a classical diffusion, lower is rougher."
 )
-k[1].metric("Vol of vol η", f"{fit['eta']:.2f}")
-k[2].metric("Spot-vol correlation ρ", f"{fit['rho']:+.2f}".replace("-", "−"))
+k[1].metric("Vol of vol", f"{fit['eta']:.2f}", help="η: how strongly volatility itself moves.")
+k[2].metric(
+    "Spot-vol correlation",
+    f"{fit['rho']:+.2f}".replace("-", "−"),
+    help="ρ. Negative: vol rises when the market falls.",
+)
 k = st.columns(3)
 k[0].metric(
-    "Rough Bergomi error", f"{100 * fit['rmse']:.2f} pts", help="RMSE of implied vols, all fitted quotes."
+    "Rough Bergomi error",
+    f"{100 * fit['rmse']:.2f} vol pts",
+    help="Root-mean-square gap between the model's implied vols and the market's, over all fitted quotes.",
 )
-k[1].metric("Heston error", f"{100 * fit['heston_rmse']:.2f} pts", help="Heston fitted to the same quotes.")
+k[1].metric(
+    "Heston error", f"{100 * fit['heston_rmse']:.2f} vol pts", help="Heston fitted to the same quotes."
+)
 k[2].metric(
     "Shape error: rough / Heston",
-    f"{100 * fit['shape_rmse']:.2f} / {100 * fit['heston_shape_rmse']:.2f} pts",
+    f"{100 * fit['shape_rmse']:.2f} / {100 * fit['heston_shape_rmse']:.2f} vol pts",
     help="RMSE after removing each expiry's average miss: how well each model gets the smile's shape, setting "
     "aside its level (rough Bergomi fits one forward-variance level per expiry; Heston can't).",
 )
@@ -71,20 +76,16 @@ charts.log_ticks(
     fig, "x", [d for d in (2, 3, 5, 7, 10, 14, 21, 30, 45, 60, 90) if x.min() * 0.8 <= d <= x.max() * 1.25]
 )
 fig.update_xaxes(title_text="Days to expiry")
-fig.update_yaxes(type="log", title_text="|dσ / d ln K| at the money")
+fig.update_yaxes(type="log", title_text="At-the-money skew (absolute)")
 st.plotly_chart(theme.style(fig, pal, 380), width="stretch")
 slope_note = ""
 if len(market) >= 3:
     slope = np.polyfit(np.log(market["T"]), np.log(market["skew_market"].abs()), 1)[0]
     slope_note = (
-        f" This day the market's points fall with slope {slope:+.2f}, which reads as H ≈ {0.5 + slope:.2f}; "
-        "a single day's estimate is noisy (one expiry's smile can be nearly symmetric)."
+        f" This day the market's points have slope {slope:+.2f}, which reads as H ≈ {0.5 + slope:.2f}; "
+        "one day's estimate is noisy."
     ).replace("-", "−")
-st.caption(
-    "On log-log axes a power law is a straight line with slope H − ½. Skew is the slope of implied vol in "
-    "log-strike at the money, measured by a central difference over ±¼ standard deviation for every curve."
-    + slope_note
-)
+st.caption("On log-log axes a power law is a straight line, with slope H − ½." + slope_note)
 
 # --- One short expiry -----------------------------------------------------------------------
 st.subheader("A short expiry up close")
@@ -124,8 +125,8 @@ bars.update_yaxes(title_text="Median shape error (vol)", tickformat=".2%")
 bars.update_xaxes(title_text="Expiry")
 st.plotly_chart(theme.style(bars, pal, 340), width="stretch")
 st.caption(
-    f"Median over {fits['trade_date'].nunique()} trading days of each expiry's spread of misses around its own "
-    "average (vol points). Lower is better."
+    f"Median over {fits['trade_date'].nunique()} trading days of each expiry's shape error: its misses after "
+    "removing their average, in vol points. Lower is better."
 )
 
 st.subheader("Fitted roughness over time")
@@ -175,10 +176,25 @@ with c2:
     st.plotly_chart(fig, width="stretch")
 
 st.caption(
-    "A single day's fitted H is noisy: with a handful of expiries, H, η and the forward variance levels can "
-    "trade off against each other. The level it hovers around, and the market-slope estimate beside it, are "
-    "the steadier reading."
+    "One day's fitted H is noisy, because H, vol of vol and the variance levels can trade off against each other. "
+    "The level it hovers around is the steadier reading."
 )
+
+with st.expander("How this is computed"):
+    st.markdown(
+        f"""
+- Rough Bergomi's variance is a forward-variance curve times the exponential of a rough (fractional)
+  Brownian motion: roughness H, vol of vol η, spot-vol correlation ρ. It predicts an at-the-money skew
+  that grows like T^(H − ½) as maturity T shrinks; Heston's flattens out instead.
+- It has no pricing formula, so it's priced by Monte Carlo: the hybrid scheme, {ROUGH_PATHS:,} paths, four
+  time steps a day, and the same random numbers every day so day-to-day changes aren't noise.
+- The fit finds H, η, ρ and one forward-variance level per expiry, for quotes between the {MIN_ABS_DELTA:.0%}-delta
+  put and call. Heston is refitted to exactly the same quotes, so the errors compare like with like.
+- Skew is the slope of implied vol against log-strike at the money: a central difference over ±¼ standard
+  deviation, for the market (via its SABR fit) and for both models.
+- The fits run in the daily data job; this page only reads them.
+"""
+    )
 
 with st.expander("Data: this day's expiries and the fit history"):
     st.dataframe(today.drop(columns=["trade_date", "underlying"]), hide_index=True)

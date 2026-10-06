@@ -14,10 +14,9 @@ pal = theme.current()
 
 st.title("Exotic options")
 st.caption(
-    "Path-dependent options priced by Monte Carlo under three models: Black-Scholes at the sidebar's σ, Heston "
-    "and rough Bergomi at their latest NIFTY fits. Spot, strike, expiry, rate and dividend yield come from the "
-    "sidebar; barriers and lookbacks are monitored continuously (a Brownian-bridge correction between daily "
-    "fixings)."
+    "Options whose payoff depends on the whole price path, priced by Monte Carlo under three models: Black-Scholes "
+    "at the sidebar's volatility, and Heston and rough Bergomi at their latest NIFTY fits. The rest of the option "
+    "comes from the sidebar."
 )
 
 days = round(spec.T * 365)
@@ -86,7 +85,7 @@ except data.DataUnavailable:
     heston_row = rough_row = None
     st.warning("Market data can't be reached right now, so only Black-Scholes is priced.")
 
-models = [("Black-Scholes", None, f"σ = {sigma:.2%}")]
+models = [("Black-Scholes", None, f"{sigma:.2%} vol")]
 if heston_row:
     models.append(("Heston", heston_row, f"NIFTY fit of {heston_row['trade_date']:%d %b %Y}"))
 if rough_row:
@@ -214,3 +213,17 @@ st.caption(
     "building paths from principal components puts most of the variance in the first few coordinates, where "
     "Sobol points are best."
 )
+
+with st.expander("How this is computed"):
+    st.markdown(
+        f"""
+- Prices are fixed once a calendar day until expiry. Asians average those fixings; barriers and lookbacks are monitored
+  continuously, with a Brownian-bridge correction between fixings.
+- Paths: {BS_PATHS:,} under Black-Scholes and {HESTON_PATHS:,} under Heston (full-truncation Euler), both
+  compiled with numba so no path is stored; {rough_paths:,} under rough Bergomi (the hybrid scheme, simulated
+  2,000 at a time to keep memory flat).
+- The Black-Scholes check uses closed forms: geometric Asians, barriers (Haug) and floating lookbacks
+  (Goldman-Sosin-Gatto). There is none for the arithmetic Asian.
+- The variance-reduction table uses 32,000 paths per method and up to 64 fixings.
+"""
+    )

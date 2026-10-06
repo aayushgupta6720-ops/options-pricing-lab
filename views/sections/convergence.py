@@ -10,10 +10,9 @@ from ui import charts, theme
 spec = st.session_state["spec"].bump(style="european")
 pal = theme.current()
 
-st.title("Model convergence")
 st.caption(
     "Black-Scholes is exact for a European option, so it's the yardstick: the binomial tree and Monte Carlo "
-    "should home in on it as steps and paths grow. American exercise is ignored on this page."
+    "should home in on it as steps and paths grow. American exercise is ignored here."
 )
 if spec.T == 0 or spec.sigma == 0:
     st.info(

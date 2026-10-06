@@ -6,10 +6,10 @@ from optlab import strategy
 from optlab.strategy import Leg
 from ui import charts, data, theme
 
-st.title("Strategy payoff")
+st.title("Strategy builder")
 st.caption(
-    "Build a multi-leg position on the latest NSE close. Each leg is priced at the market's implied vol for "
-    "its strike (Black-76 on the forward), so premiums match the smile rather than one flat volatility."
+    "Build a multi-leg position on the latest NSE close. Each leg is priced at the market's implied vol for its "
+    "strike, so premiums match the smile rather than one flat volatility."
 )
 
 c1, c2, c3 = st.columns(3)

@@ -10,11 +10,9 @@ from ui import charts, data, theme
 spec = st.session_state["spec"]
 pal = theme.current()
 
-st.title("Heston model")
 st.caption(
-    "Black-Scholes holds volatility fixed. Heston lets the variance wander, mean-revert and move against the "
-    "market, which is what bends a flat line into a skewed smile. Move the parameters and watch the smile "
-    "change; the option comes from the sidebar."
+    "Heston lets volatility wander, mean-revert and move against the market, which bends Black-Scholes' flat line "
+    "into a skewed smile. Move the sliders and watch the smile change."
 )
 
 TEXTBOOK = HestonParams(v0=0.0175, kappa=1.5768, theta=0.0398, xi=0.5751, rho=-0.5711)  # Fang & Oosterlee
@@ -55,16 +53,25 @@ b2.button(
 )
 
 c = st.columns(5)
-c[0].slider("Spot vol √v₀ (%)", 1.0, 80.0, step=0.5, key="hs_vol0")
-c[1].slider("Long-run vol √θ (%)", 1.0, 80.0, step=0.5, key="hs_volbar")
-c[2].slider("Mean reversion κ", 0.1, 30.0, step=0.1, key="hs_kappa")
-c[3].slider("Vol of vol ξ", 0.05, 5.0, step=0.05, key="hs_xi")
-c[4].slider("Correlation ρ", -0.99, 0.99, step=0.01, key="hs_rho")
+c[0].slider("Current vol (%)", 1.0, 80.0, step=0.5, key="hs_vol0", help="√v₀: today's instantaneous vol.")
+c[1].slider("Long-run vol (%)", 1.0, 80.0, step=0.5, key="hs_volbar", help="√θ: where vol drifts back to.")
+c[2].slider(
+    "Mean reversion",
+    0.1,
+    30.0,
+    step=0.1,
+    key="hs_kappa",
+    help="κ: how fast vol returns to its long-run level.",
+)
+c[3].slider("Vol of vol", 0.05, 5.0, step=0.05, key="hs_xi", help="ξ: how much the variance itself moves.")
+c[4].slider(
+    "Spot-vol correlation", -0.99, 0.99, step=0.01, key="hs_rho", help="ρ. Negative: vol rises as spot falls."
+)
 ss = st.session_state
 p = HestonParams((ss.hs_vol0 / 100) ** 2, ss.hs_kappa, (ss.hs_volbar / 100) ** 2, ss.hs_xi, ss.hs_rho)
 st.caption(
-    f"Feller ratio 2κθ/ξ² = {p.feller_ratio:.2f} ({'variance stays positive' if p.feller_ratio >= 1 else 'variance can touch zero'}); "
-    f"half-life of a vol shock {np.log(2) / p.kappa * 365:.0f} days."
+    f"Feller ratio {p.feller_ratio:.2f} ({'variance stays positive' if p.feller_ratio >= 1 else 'variance can touch zero'}); "
+    f"a vol shock halves in {np.log(2) / p.kappa * 365:.0f} days."
 )
 
 if spec.T == 0:
@@ -88,7 +95,7 @@ m[1].metric(
     "—" if np.isnan(iv) else f"{iv:.2%}",
     help="The Black-Scholes vol that gives the same price.",
 )
-m[2].metric(f"Black-Scholes at σ = {spec.sigma:.2%}", "—" if np.isnan(bs) else f"{bs:,.4f}")
+m[2].metric(f"Black-Scholes at {spec.sigma:.2%} vol", "—" if np.isnan(bs) else f"{bs:,.4f}")
 
 c1, c2 = st.columns(2)
 with c1:
@@ -112,7 +119,8 @@ with c1:
     fig.add_vline(x=K, line=dict(color=pal.muted, width=1), annotation_text="Your strike")
     st.plotly_chart(fig, width="stretch")
     st.caption(
-        "ρ tilts it (negative: downside strikes dearer); ξ curves it; both matter most for short expiries."
+        "Correlation tilts it (negative: downside strikes dearer) and vol of vol curves it, most of all for short "
+        "expiries."
     )
 with c2:
     st.subheader("At-the-money vol by maturity")
@@ -120,16 +128,18 @@ with c2:
     atm = [float(implied_vol(heston.price(1.0, 1.0, t, 0.0, p), 1.0, 1.0, t, 0.0, 0.0)) for t in maturities]
     fig = charts.lines(
         maturities * 365,
-        {"ATM implied vol": atm},
+        {"At-the-money implied vol": atm},
         pal,
         x_title="Days to expiry",
         y_title="Implied volatility",
         percent_y=True,
     )
     fig.update_xaxes(type="log")
-    charts.reference_line(fig, np.sqrt(p.theta), "√θ", pal)
+    charts.reference_line(fig, np.sqrt(p.theta), "Long-run vol", pal)
     st.plotly_chart(fig, width="stretch")
-    st.caption("Short-dated vol starts near √v₀ and drifts towards √θ, faster for a larger κ.")
+    st.caption(
+        "Short-dated vol starts near the current vol and drifts to the long-run vol, faster for faster mean reversion."
+    )
 
 st.subheader("Check: Monte Carlo against the formula")
 paths = st.select_slider(

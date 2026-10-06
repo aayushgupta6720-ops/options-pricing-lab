@@ -24,7 +24,7 @@ Cox-Ross-Rubinstein: each step of length $\Delta t = T/n$ moves the spot up by $
 or down by $d = 1/u$, with risk-neutral probability $p = (e^{(r-q)\Delta t} - d)/(u - d)$. Values are
 rolled back from the payoff at expiry; for American exercise each node takes the larger of its
 continuation value and immediate exercise. The error versus Black-Scholes falls roughly like $1/n$ and
-zig-zags depending on where the strike sits between nodes (see the *Model convergence* page).
+zig-zags depending on where the strike sits between nodes (see the Option pricer's *Convergence* tab).
 
 CRR needs $d < e^{(r-q)\Delta t} < u$, which fails when the drift per step outruns the volatility
 (low vol, high rates, long maturities, few steps). The tree then switches to a drift-centred lattice,

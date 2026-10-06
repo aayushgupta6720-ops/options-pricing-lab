@@ -195,7 +195,7 @@ def model_smile(quotes: pd.DataFrame, curves: dict, pal: Palette, fitted=None) -
     for name, mask, marker in (
         ("Market", fitted, dict(color=pal.series[0], line=dict(width=0))),
         (
-            "Market, beyond 5-delta (not fitted)",
+            "Market, far wings (not fitted)",
             ~fitted,
             dict(color="rgba(0,0,0,0)", line=dict(width=1.5, color=pal.series[0])),
         ),

@@ -8,22 +8,23 @@ with a history back to July 2024.
 after 15 minutes idle, so the first visit can take about a minute to wake up. The data updates every
 weekday evening.
 
-![Volatility surface page](docs/screenshots/surface.png)
+![Implied volatility page](docs/screenshots/surface.png)
 
 ## What's in it
 
+Five pages; the bigger ones are split into tabs, and only the open tab is computed. Each tab has its
+own link, e.g. [/pricer?tab=Convergence](https://options-pricing-lab.onrender.com/pricer?tab=Convergence).
+
 | Page | What it shows |
 |---|---|
-| **Volatility surface** | For any trading day: the smile per expiry, ATM and 25-delta term structure, and a 3D surface. Spot, 30-day ATM vol, 25Δ skew, realized vol and India VIX with day-on-day changes. |
-| **Volatility history** | 30-day implied vs 20-day realized vol vs India VIX, the term structure and skew over time, and how often implied vol overpriced the volatility that followed. |
-| **Model vs market** | Heston (one set of five parameters per day for the whole surface) and SABR (one smile per expiry) fitted to every trading day: the fitted parameters, each model against the market's smile, a heatmap of where Heston misses, SABR's parameters by expiry, and how Heston's parameters moved over two years. |
-| **Rough volatility** | Rough Bergomi against Heston on NIFTY's short expiries: the at-the-money skew against maturity on log-log axes (a power law is a straight line), short-expiry smiles under both models, which model gets the smile's shape right by maturity across two years, and the fitted roughness H over time. |
-| **Strategy payoff** | Multi-leg positions (spreads, straddles, condors, butterflies, or your own legs) on the latest close. Each leg is priced at its strike's implied vol, with P&L in ₹ per lot, breakevens, max profit/loss and position Greeks. |
-| **Pricer** | One option priced by Black-Scholes, a binomial tree and Monte Carlo side by side, with Greeks, the early-exercise premium for American options, and an implied-vol calculator. Loads the latest NIFTY at-the-money option in one click. |
-| **Greeks** | Delta, gamma, vega, theta and rho against spot, volatility or time to expiry. |
-| **Model convergence** | The tree's error against steps (≈1/n) and Monte Carlo's confidence interval against paths (≈1/√n), measured against the exact Black-Scholes price. |
+| **Implied volatility** | *Surface:* for any trading day, the smile per expiry, the at-the-money and 25-delta term structure, and a 3D surface, with spot, 30-day implied vol, 30-day skew, realized vol and India VIX and their day-on-day changes. *History:* 30-day implied vs 20-day realized vol vs India VIX, the term structure and skew over time, and how often implied vol overpriced the volatility that followed. |
+| **Models vs market** | *Heston & SABR:* Heston (one set of five parameters per day for the whole surface) and SABR (one smile per expiry) fitted to every trading day: the fitted parameters, each model against the market's smile, a heatmap of where Heston misses, SABR's parameters by expiry, and how Heston's parameters moved over two years. *Rough volatility:* rough Bergomi against Heston on NIFTY's short expiries: the at-the-money skew against maturity on log-log axes (a power law is a straight line), short-expiry smiles under both models, which model gets the smile's shape right by maturity, and the fitted roughness H over time. |
+| **Strategy builder** | Multi-leg positions (spreads, straddles, condors, butterflies, or your own legs) on the latest close. Each leg is priced at its strike's implied vol, with P&L in ₹ per lot, breakevens, max profit/loss and position Greeks. |
+| **Option pricer** | One option, set in the sidebar or loaded from the latest NIFTY close in one click. *Prices:* Black-Scholes, a binomial tree and Monte Carlo side by side, Greeks, the early-exercise premium for American options, and an implied-vol calculator. *Greeks:* each Greek against spot, volatility or time to expiry. *Convergence:* the tree's error against steps (≈1/n) and Monte Carlo's confidence interval against paths (≈1/√n). *Heston model:* sliders for Heston's five parameters (preloaded with the latest NIFTY fit), the smile and term structure they produce, and a Monte Carlo check against the formula. |
 | **Exotic options** | Asian, barrier and lookback options on the sidebar's option, priced by Monte Carlo under Black-Scholes, Heston and rough Bergomi side by side, with the Black-Scholes closed form as a check, and five variance-reduction methods compared. |
-| **Heston model** | Sliders for Heston's five parameters (preloaded with the latest NIFTY fit) and the smile and at-the-money term structure they produce, the sidebar option's Heston price, and a Monte Carlo check against the formula. |
+
+Labels use plain names (mean reversion, vol of vol); the symbols and the method behind each chart
+are one click away, in the help icons and each page's *How this is computed* section.
 
 ## Findings from the data
 
@@ -105,7 +106,7 @@ wings), over all 562 days:
   variate cuts the variance per path by about 1,800×, Sobol points with a principal-component path
   construction by about 7,600×, and both together by about 200,000× (one path doing the work of 200,000).
 
-| Volatility history (dark theme) | Strategy payoff |
+| Implied volatility, History tab (dark theme) | Strategy builder |
 |---|---|
 | ![History page](docs/screenshots/history-dark.png) | ![Strategy page](docs/screenshots/strategy.png) |
 
@@ -142,7 +143,7 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
 
 ## Testing
 
-209 tests run in CI (`ruff` + `pytest`, about 90 seconds, no network):
+212 tests run in CI (`ruff` + `pytest`, about 90 seconds, no network):
 
 - **Models:** Hull's textbook values for prices, Greeks and the 5-step American put; put-call
   parity; tree → Black-Scholes convergence, including the low-vol cases where the tree switches
@@ -174,8 +175,9 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
 - **Strategies:** breakevens, bounded vs unlimited P&L (including a short put's spot-to-zero case),
   that an iron condor collects a credit, and theta (with the forward rolling down) against the
   value a moment later.
-- **App:** every page renders (Streamlit AppTest), plus regressions for state and edge cases:
-  sidebar inputs surviving a trip to a market page, per-underlying strategy widths, low-vol and
+- **App:** every page and tab renders (Streamlit AppTest), and only the open tab runs. Plus
+  regressions for state and edge cases: sidebar inputs surviving a trip to a market page, choices
+  inside a tab surviving a visit to another tab, per-underlying strategy widths, low-vol and
   American inputs, a missing latest chain, an underlying with no data, and working offline. The
   tests point the data URL at a closed port, so they can't quietly fetch from GitHub.
 
