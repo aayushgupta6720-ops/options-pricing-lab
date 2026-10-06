@@ -12,5 +12,10 @@ rebuilt every weekday evening from NSE's end-of-day F&O file by `.github/workflo
   ratio, fit error in vol, quote and expiry counts).
 - `models/sabr.parquet`: one SABR fit per underlying, day and expiry (alpha, rho, nu with beta = 1,
   forward, fit error).
+- `models/rough_bergomi.parquet`: one rough Bergomi fit per day for NIFTY (H, eta, rho, the fitted
+  forward variance curve, fit and shape errors), with Heston refitted to the same quotes for comparison.
+- `models/rough_bergomi_expiries.parquet`: per day and expiry, the ATM skew of the market (from SABR),
+  rough Bergomi and Heston, and each model's errors.
+- `models/rough_bergomi_quotes.parquet`: every fitted quote with both models' implied vols.
 
 Source: NSE's public archive (nsearchives.nseindia.com). For research and education.
