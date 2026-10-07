@@ -8,11 +8,15 @@ name: Daily NSE ingest
 
 on:
   schedule:
-    # GitHub's scheduled runs are best-effort: they can start late or, when GitHub is busy, not at
-    # all (6 Oct 2026's never started). The second time is a backup; a run that finds the day
-    # already done saves nothing.
+    # GitHub's scheduled runs are best-effort: they can start hours late or not at all (6 Oct 2026's
+    # started 5 hours late; 7 Oct's hadn't started 1.5 hours after its time). So there are several
+    # times through the night and one before the market opens. Each run looks back 10 days, and one
+    # that finds the day already done saves nothing.
     - cron: "47 14 * * 1-5" # 20:17 IST, weekdays
-    - cron: "47 16 * * 1-5" # 22:17 IST, weekdays
+    - cron: "47 16 * * 1-5" # 22:17 IST
+    - cron: "47 18 * * 1-5" # 00:17 IST, the next day
+    - cron: "47 20 * * 1-5" # 02:17 IST, the next day
+    - cron: "47 2 * * 2-6" # 08:17 IST, the next morning (Tuesday to Saturday), before the market opens
   workflow_dispatch:
     inputs:
       since:

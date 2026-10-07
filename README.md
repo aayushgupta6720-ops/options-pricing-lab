@@ -122,7 +122,7 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
                          ──► optlab/calibration.py     Heston per day, SABR per expiry, rough
                                                        Bergomi per day (NIFTY) → models/
                                      │
-               GitHub Actions, weekdays 20:17 IST      ▼
+               GitHub Actions, weekday evenings        ▼
                                               Streamlit app (Render)
 ```
 
@@ -139,7 +139,9 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
 - **`scripts/rebuild_summary.py`** recomputes the daily summary from the stored quotes after a
   change to how it's derived, without downloading anything.
 - **`.github/workflows/ingest.yml`** runs ingest and calibration every weekday evening and commits to the
-  `market-data` branch. The app reads its end-of-day data from that branch.
+  `market-data` branch. The app reads its end-of-day data from that branch. It's scheduled at 20:17 IST
+  and again at 22:17, 00:17, 02:17 and 08:17, because GitHub's scheduled runs can start hours late or
+  not at all; a run that finds the day already done saves nothing.
 - **`optlab/market/live.py`** is the one live call: NIFTY's and BANKNIFTY's level from NSE's website
   API, else Yahoo Finance. RELIANCE stays at its last close: NSE refuses scripts its stock quotes, and
   Yahoo turned the app's server away from its first request. The app asks
