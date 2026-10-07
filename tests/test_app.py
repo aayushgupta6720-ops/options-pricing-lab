@@ -325,3 +325,7 @@ def test_strategy_centres_on_the_live_price_and_keeps_it_until_refreshed(monkeyp
     assert captions(app, f"NIFTY {close * 1.03:,.2f}, live from NSE")
     app.button(key="strategy_refresh").click().run()
     assert captions(app, f"NIFTY {close * 1.04:,.2f}, live from NSE") and not app.exception
+
+    app.selectbox(key="strategy_underlying").set_value("RELIANCE").run()  # stocks stay at the close
+    assert captions(app, "the close on 01 Oct 2026") and not captions(app, "live from")
+    assert not [b for b in app.button if b.key == "strategy_refresh"] and not app.exception

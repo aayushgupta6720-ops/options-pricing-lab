@@ -1,10 +1,12 @@
-"""The latest price, during market hours or since the last close: NSE's own figure, else Yahoo's.
+"""The latest index level, during market hours or since the last close: NSE's own, else Yahoo's.
 
 NSE's website API gives index levels (one request covers NIFTY and BANKNIFTY), but its bot
-protection turns some clients away, and it refuses scripts its single-stock quotes; Yahoo
-Finance's chart API is the fallback, and the only source for stocks. Yahoo rate-limits quickly
-(HTTP 429). So a source that refuses or fails is left alone for a while, and callers cache what
-comes back (the app asks at most once a minute per underlying).
+protection turns some clients away; Yahoo Finance's chart API is the fallback. Yahoo rate-limits
+quickly (HTTP 429). So a source that refuses or fails is left alone for a while, and callers cache
+what comes back (the app asks at most once a minute per underlying).
+
+Stocks aren't covered: NSE refuses scripts its single-stock quotes, and Yahoo answered the app's
+server (on Render, in the US) with 429 from its first request, so RELIANCE stays at its last close.
 """
 
 import logging
@@ -21,7 +23,8 @@ IST = timezone(timedelta(hours=5, minutes=30))  # India has no daylight saving
 NSE_URL = "https://www.nseindia.com/api/allIndices"
 YAHOO_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1m&range=1d"
 NSE_INDICES = {"NIFTY": "NIFTY 50", "BANKNIFTY": "NIFTY BANK"}
-YAHOO_SYMBOLS = {"NIFTY": "^NSEI", "BANKNIFTY": "^NSEBANK", "RELIANCE": "RELIANCE.NS"}
+YAHOO_SYMBOLS = {"NIFTY": "^NSEI", "BANKNIFTY": "^NSEBANK"}
+COVERED = frozenset(NSE_INDICES) | frozenset(YAHOO_SYMBOLS)
 TIMEOUT = 4  # seconds: a page waits this long for a source when the cache is empty
 REST = 600  # seconds to leave a source alone after it fails
 log = logging.getLogger(__name__)

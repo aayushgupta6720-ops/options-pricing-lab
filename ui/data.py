@@ -177,11 +177,16 @@ def _live_quote(underlying: str) -> live.Quote | None:
     return live.latest(underlying)
 
 
+def has_live(underlying: str) -> bool:
+    """Whether a live price is ever looked up for it (indices only; stocks stay at the close)."""
+    return LIVE_PRICES and underlying in live.COVERED
+
+
 def live_spot(underlying: str, close_day: date, close: float) -> live.Quote | None:
     """The live price, if it's later than the dataset's last close: during the session, and after it
     until that evening's data lands. None otherwise, when no source answers, or when the price is
     implausibly far from the close."""
-    if not LIVE_PRICES:
+    if not has_live(underlying):
         return None
     quote = _live_quote(underlying)
     if quote is None or quote.time.date() <= close_day or abs(np.log(quote.price / close)) > MAX_LIVE_MOVE:

@@ -59,13 +59,19 @@ def test_indices_come_from_nse_in_ist(web):
     assert not any("yahoo" in url for url in calls)
 
 
-def test_stocks_come_from_yahoo_without_asking_nse(web):
+def test_yahoo_is_the_fallback_for_indices(web):
     routes, calls, _ = web
-    routes["yahoo.com"] = Response(YAHOO)
-    quote = live.latest("RELIANCE")
+    routes["yahoo.com"] = Response(YAHOO)  # NSE unreachable
+    quote = live.latest("BANKNIFTY")
     assert (quote.price, quote.time, quote.source) == (1350.2, WHEN, "Yahoo Finance")
-    assert "RELIANCE.NS" in calls[0] and len(calls) == 1
-    assert "NSE" not in live._resting  # not covering a stock isn't a failure
+    assert "%5ENSEBANK" in calls[-1]
+
+
+def test_stocks_are_not_looked_up(web):
+    routes, calls, _ = web
+    routes["nseindia.com"], routes["yahoo.com"] = Response(NSE), Response(YAHOO)
+    assert live.latest("RELIANCE") is None and not calls
+    assert not live._resting  # not covering a stock isn't a failure
 
 
 @pytest.mark.parametrize(

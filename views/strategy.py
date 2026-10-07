@@ -60,7 +60,7 @@ price_line = (
 )
 c1, c2 = st.columns([5, 1], vertical_alignment="center")
 c1.caption(price_line)
-if data.LIVE_PRICES:
+if data.has_live(underlying):
     c2.button(
         "Refresh price",
         key="strategy_refresh",
