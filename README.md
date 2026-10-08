@@ -141,7 +141,9 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
 - **`.github/workflows/ingest.yml`** runs ingest and calibration every weekday evening and commits to the
   `market-data` branch. The app reads its end-of-day data from that branch. It's scheduled at 20:17 IST
   and again at 22:17, 00:17, 02:17 and 08:17, because GitHub's scheduled runs can start hours late or
-  not at all; a run that finds the day already done saves nothing.
+  not at all; a run that finds the day already done saves nothing. In practice they've started 3 to 7
+  hours late, so a launchd job on my Mac also starts the workflow (`gh workflow run ingest.yml`) at
+  20:17 and 22:17 IST on weekdays; GitHub's schedule covers the evenings the Mac is off.
 - **`optlab/market/live.py`** is the one live call: NIFTY's and BANKNIFTY's level from NSE's website
   API, else Yahoo Finance. RELIANCE stays at its last close: NSE refuses scripts its stock quotes, and
   Yahoo turned the app's server away from its first request. The app asks
@@ -215,9 +217,11 @@ git worktree add data market-data
 
 ## Data caveats
 
-- **End-of-day only.** The bhavcopy has closing prices, not bid/ask, so the surface updates daily.
-  Closes are NSE's volume-weighted average of the last half hour, which keeps options and the
-  underlying roughly in step.
+- **End-of-day smiles, live index level.** The bhavcopy has closing prices, not bid/ask, so the
+  surface, the smiles and the model fits update once a day. Closes are NSE's volume-weighted average
+  of the last half hour, which keeps options and the underlying roughly in step. During market hours
+  the Option pricer and Strategy builder move NIFTY and BANKNIFTY to the live index level, but still
+  read volatility off the last close's smile.
 - **Liquidity filter.** Quotes need 20+ trades and a price of at least ₹0.50, so far wings and
   long-dated expiries are thin. NIFTY lists options out to 2031 but only the first year or so trades.
 - **Rate.** A single 5.5% rate (the 91-day T-bill in September 2026) is used throughout. Forwards come
