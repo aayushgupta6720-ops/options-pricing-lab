@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import numpy as np
@@ -132,3 +132,45 @@ def test_rebuild_summary_recomputes_metrics_and_keeps_chains(tmp_path, fake_nse)
     assert 0.11 < rebuilt.loc["NIFTY", "atm_iv_30d"] < 0.15
     assert rebuilt.loc["NIFTY", "india_vix"] == 0.1446
     assert len(store.read_chain(tmp_path, "NIFTY", date(2026, 10, 1))) == quotes
+
+
+def at(monkeypatch, when: datetime):
+    """Run ingest as if it were `when` (IST)."""
+    monkeypatch.setattr(ingest, "now", lambda: when.replace(tzinfo=ingest.IST))
+
+
+def test_closed_days_are_remembered_and_not_asked_again(tmp_path, fake_nse, monkeypatch):
+    fake_nse.published = {date(2026, 10, 1), date(2026, 10, 5)}  # 2 Oct a holiday, then a weekend
+    at(monkeypatch, datetime(2026, 10, 5, 20, 17))
+    assert ingest.main(["--data-dir", str(tmp_path), "--since", "2026-10-01"]) == 0
+    assert store.closed_days(tmp_path) == {date(2026, 10, 2), date(2026, 10, 3), date(2026, 10, 4)}
+
+    # NSE stops answering (as it did late at night on 9 Oct 2026); nothing is left to ask it.
+    fake_nse.broken = {date(2026, 10, d) for d in range(1, 6)}
+    fake_nse.clear()
+    assert ingest.main(["--data-dir", str(tmp_path), "--since", "2026-10-01"]) == 0
+    assert fake_nse == []
+    # An explicit date still asks.
+    fake_nse.broken = set()
+    ingest.main(["--data-dir", str(tmp_path), "--date", "2026-10-03"])
+    assert fake_nse == [date(2026, 10, 3)]
+
+
+def test_a_date_with_no_later_file_is_not_closed(tmp_path, fake_nse, monkeypatch):
+    at(monkeypatch, datetime(2026, 10, 2, 21, 0))  # 2 Oct not published yet: maybe late, maybe a holiday
+    ingest.main(["--data-dir", str(tmp_path), "--since", "2026-10-01"])
+    assert store.closed_days(tmp_path) == set()
+    fake_nse.clear()
+    ingest.main(["--data-dir", str(tmp_path), "--since", "2026-10-01"])
+    assert fake_nse == [date(2026, 10, 2)]  # asked again
+
+
+def test_today_is_only_tried_from_the_evening(tmp_path, fake_nse, monkeypatch):
+    fake_nse.published = {date(2026, 10, 1)}
+    at(monkeypatch, datetime(2026, 10, 1, 9, 30))
+    ingest.main(["--data-dir", str(tmp_path), "--since", "2026-10-01"])
+    assert fake_nse == []
+    at(monkeypatch, datetime(2026, 10, 1, 18, 5))
+    ingest.main(["--data-dir", str(tmp_path), "--since", "2026-10-01"])
+    assert fake_nse == [date(2026, 10, 1)]
+    assert date(2026, 10, 1) in set(store.read_summary(tmp_path)["trade_date"])

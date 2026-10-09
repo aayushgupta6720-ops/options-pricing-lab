@@ -24,6 +24,8 @@ SABR_FITS = "models/sabr.parquet"
 ROUGH_FITS = "models/rough_bergomi.parquet"
 ROUGH_EXPIRIES = "models/rough_bergomi_expiries.parquet"
 ROUGH_QUOTES = "models/rough_bergomi_quotes.parquet"
+# Dates NSE had no file for although a later date had one: weekends and holidays, never asked again.
+CLOSED_DAYS = "closed_days.csv"
 REALIZED_WINDOW = 20  # trading days
 # No index or large-cap stock moves this much in a day (|log return|), so a move this big that
 # comes with a matching lot-size change is a bonus issue or split, not a price move.
@@ -52,6 +54,21 @@ def ingested(root: Path) -> set[tuple[date, str]]:
     """The (trade date, underlying) pairs already in the dataset."""
     summary = read_summary(root)
     return set(zip(summary["trade_date"], summary["underlying"], strict=True))
+
+
+def closed_days(root: Path) -> set[date]:
+    path = Path(root) / CLOSED_DAYS
+    if not path.exists():
+        return set()
+    return set(pd.to_datetime(pd.read_csv(path)["date"]).dt.date)
+
+
+def add_closed_days(root: Path, days) -> None:
+    known = closed_days(root)
+    if set(days) <= known:
+        return
+    Path(root).mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"date": sorted(known | set(days))}).to_csv(Path(root) / CLOSED_DAYS, index=False)
 
 
 def read_chain(root: Path, underlying: str, day: date) -> pd.DataFrame:

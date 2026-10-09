@@ -9,6 +9,11 @@ load are retried. Every calendar date is tried, since NSE occasionally trades on
 with no file (weekend, holiday, not published yet) is skipped, so the daily run can look back over
 the last few days and fill in anything an earlier run missed. Any other failure is reported and
 the run carries on with the remaining days, then exits with status 1.
+
+A date with no file is remembered as closed once a later date has one (NSE publishes in order), and
+isn't asked about again, so a run after the day is in makes no requests at all: NSE timing out at
+night can't fail it. Today is only tried from 18:00 IST, when its files can exist. An explicit
+--date, or --force, asks NSE regardless.
 """
 
 import argparse
@@ -26,6 +31,12 @@ from optlab.market.chain import build_chain
 from optlab.surface import daily_summary
 
 PAUSE_SECONDS = 1.0  # between uncached downloads, to stay polite to NSE
+IST = ZoneInfo("Asia/Kolkata")
+PUBLISHED_HOUR = 18  # IST; NSE posts a day's files in the evening, so before this today has none
+
+
+def now() -> datetime:
+    return datetime.now(IST)
 
 
 def process_day(day: date, raw, vix: float) -> tuple[list, list[dict]]:
@@ -76,11 +87,14 @@ def main(argv=None) -> int:
     parser.add_argument("--force", action="store_true", help="redo days already in the dataset")
     args = parser.parse_args(argv)
 
-    today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    current = now()
+    today = current.date()
     if args.date:
         start = end = args.date
     else:
-        start, end = args.since or today - timedelta(days=args.days), today
+        last = today if current.hour >= PUBLISHED_HOUR else today - timedelta(days=1)
+        start, end = args.since or today - timedelta(days=args.days), last
+    closed = set() if args.force or args.date else store.closed_days(args.data_dir)
 
     done, retry_vix = set(), set()
     if not args.force:
@@ -91,9 +105,11 @@ def main(argv=None) -> int:
 
     session = requests.Session()
     chains, rows, month = [], [], None
-    added, missing, failed = 0, 0, []
+    added, no_file, failed = 0, [], []
 
     for day in calendar_days(start, end):
+        if day in closed:
+            continue
         if all((day, u) in done for u in config.UNDERLYINGS) and day not in retry_vix:
             continue
         if month and f"{day:%Y-%m}" != month:  # flush each month so a long backfill can resume
@@ -111,7 +127,7 @@ def main(argv=None) -> int:
                 vix = float("nan")
             day_chains, day_rows = process_day(day, raw, vix)
         except nse.NotPublished:
-            missing += 1
+            no_file.append(day)
             if day.weekday() < 5:
                 print(f"{day}: no file (holiday or not published yet)")
         except Exception as error:  # one bad day shouldn't cost the rest of the run
@@ -131,7 +147,10 @@ def main(argv=None) -> int:
             time.sleep(PAUSE_SECONDS)
 
     store.save(args.data_dir, chains, rows)
-    print(f"Added {added} day(s); {missing} date(s) had no file.")
+    latest = max((day for day, _ in store.ingested(args.data_dir)), default=None)
+    now_closed = [day for day in no_file if latest and day < latest]
+    store.add_closed_days(args.data_dir, now_closed)
+    print(f"Added {added} day(s); {len(no_file)} date(s) had no file ({len(now_closed)} recorded as closed).")
     if failed:
         print(f"{len(failed)} day(s) failed: {', '.join(map(str, failed))}")
         return 1

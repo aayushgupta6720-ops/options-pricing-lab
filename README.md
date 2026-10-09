@@ -131,7 +131,10 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
 - **`scripts/ingest.py`** adds trading days to the dataset. It's idempotent, skips holidays, and
   looks back 10 days so a missed day gets filled in by the next run. It tries every calendar date,
   because NSE occasionally trades on a weekend (Budget day 2025 was a Saturday). One failing day
-  doesn't stop the others; the run reports it and exits non-zero.
+  doesn't stop the others; the run reports it and exits non-zero. A date with no file is recorded in
+  `closed_days.csv` once a later date has one, and isn't asked about again; today is only tried from
+  18:00 IST. So once the day is in, later runs make no requests, and NSE's archive timing out late at
+  night (as it did on 9 Oct 2026) can't fail them.
 - **`scripts/calibrate.py`** fits Heston and SABR (every underlying) and rough Bergomi (NIFTY, by
   Monte Carlo) to every day that doesn't have a fit yet, warm-starting each from the previous day's.
   A new day takes about 15 seconds; the whole history about two minutes for Heston and SABR and under
@@ -155,7 +158,7 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
 
 ## Testing
 
-222 tests run in CI (`ruff` + `pytest`, about 90 seconds, no network):
+225 tests run in CI (`ruff` + `pytest`, about 90 seconds, no network):
 
 - **Models:** Hull's textbook values for prices, Greeks and the 5-step American put; put-call
   parity; tree → Black-Scholes convergence, including the low-vol cases where the tree switches
@@ -187,7 +190,8 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
   429/5xx retry, HTML-instead-of-zip); parity forwards within 10 bp of the futures; recovering a
   known smile from synthetic prices; the ATM gap gate and order-independent 25-delta vols;
   idempotent storage; realized vol across a bonus issue and a lot-size revision; ingest with
-  weekend sessions, a failing day mid-run, a newly added underlying, VIX retries and month flushes.
+  weekend sessions, a failing day mid-run, a newly added underlying, VIX retries, month flushes,
+  closed days remembered (and not closed until a later day has a file) and today waiting for 18:00 IST.
 - **Strategies:** breakevens, bounded vs unlimited P&L (including a short put's spot-to-zero case),
   that an iron condor collects a credit, and theta (with the forward rolling down) against the
   value a moment later.
