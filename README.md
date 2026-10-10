@@ -5,7 +5,8 @@ rebuilt every weekday evening from NSE's end-of-day F&O file by `.github/workflo
 `main`, which also fits the models. Nothing here is edited by hand.
 
 - `summary.parquet`: one row per underlying per trading day: spot, ATM implied vol at 7/30/60/90
-  days, 25-delta skew at 30 days, 20-day realized vol, India VIX, quote counts.
+  days, 25-delta skew at 30 days, the 30-day variance-swap vol replicated from the option strip
+  (`vs_vol_30d`), 20-day realized vol, India VIX, quote counts.
 - `chains/<UNDERLYING>/<YYYY-MM>.parquet`: every cleaned out-of-the-money quote with its forward,
   log-moneyness, implied vol and delta.
 - `models/heston.parquet`: one Heston fit per underlying per day (v0, kappa, theta, xi, rho, Feller
