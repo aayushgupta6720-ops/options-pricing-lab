@@ -124,12 +124,14 @@ def test_rebuild_summary_recomputes_metrics_and_keeps_chains(tmp_path, fake_nse)
     ingest.main(["--data-dir", str(tmp_path), "--date", "2026-10-01"])
     summary = store.read_summary(tmp_path)
     summary["atm_iv_30d"] = 0.99  # pretend an older formula produced this
+    summary = summary.drop(columns="vs_vol_30d")  # and that it predates this column
     store.write_summary(tmp_path, summary)
     quotes = len(store.read_chain(tmp_path, "NIFTY", date(2026, 10, 1)))
 
     assert rebuild_summary.main(["--data-dir", str(tmp_path)]) == 0
     rebuilt = store.read_summary(tmp_path).set_index("underlying")
     assert 0.11 < rebuilt.loc["NIFTY", "atm_iv_30d"] < 0.15
+    assert 0.13 < rebuilt.loc["NIFTY", "vs_vol_30d"] < 0.16
     assert rebuilt.loc["NIFTY", "india_vix"] == 0.1446
     assert len(store.read_chain(tmp_path, "NIFTY", date(2026, 10, 1))) == quotes
 

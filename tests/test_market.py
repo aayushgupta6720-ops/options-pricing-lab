@@ -173,6 +173,8 @@ def test_flat_vol_gives_flat_metrics():
     summary = daily_summary(chain)
     for d in config.TENORS:
         assert summary[f"atm_iv_{d}d"] == pytest.approx(0.22, rel=1e-6)
+    # Replicated from a finite strip of discrete strikes, so close rather than exact.
+    assert summary["vs_vol_30d"] == pytest.approx(0.22, rel=0.02)
 
 
 def test_tenor_interpolation_is_linear_in_total_variance():
@@ -194,6 +196,8 @@ def test_real_day_summary_is_sane(raw):
     # India VIX closed at 14.46 that day; 30-day ATM vol should sit just under it.
     assert 0.11 < summary["atm_iv_30d"] < 0.1446
     assert summary["skew_25d_30d"] > 0  # puts richer than calls
+    # The same replication as India VIX, so it lands near 14.46 and above the ATM vol.
+    assert summary["atm_iv_30d"] < summary["vs_vol_30d"] == pytest.approx(0.1446, abs=0.01)
 
 
 def test_smile_grid_is_nan_outside_the_quoted_range():

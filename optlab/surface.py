@@ -13,7 +13,7 @@ NaN (a monthly-only underlying has no honest 7-day vol).
 import numpy as np
 import pandas as pd
 
-from optlab import config
+from optlab import config, variance
 
 EXTRAPOLATION_DAYS = 14
 MAX_ATM_GAP_SD = 1.0
@@ -115,6 +115,10 @@ def daily_summary(chain: pd.DataFrame) -> dict:
     metrics = expiry_metrics(chain)
     row = {f"atm_iv_{d}d": atm_at_tenor(metrics, d) for d in config.TENORS}
     row["skew_25d_30d"] = skew_at_tenor(metrics, 30)
+    # The 30-day variance-swap rate from the whole strip (as India VIX is), interpolated like the
+    # ATM vols so the two compare day for day. It's the fair rate to set against realized variance.
+    strip = variance.term_structure(chain) if len(chain) else pd.DataFrame(columns=["T", "vs_vol"])
+    row["vs_vol_30d"] = _at_tenor(strip, "vs_vol", 30, total_variance=True)
     row["n_quotes"] = len(chain)
     row["n_expiries"] = int(metrics["atm_iv"].notna().sum()) if len(metrics) else 0
     return row

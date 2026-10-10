@@ -241,6 +241,24 @@ def test_model_page_shows_the_fit_and_both_models():
     assert {"Market", "Heston", "SABR"} <= {trace["name"] for trace in smile["data"]}
 
 
+def test_history_draws_the_variance_swap_rate_and_copes_with_older_data(tmp_path, monkeypatch):
+    app = open_page(VOLATILITY, "History")
+    lines = json.loads(app.get("plotly_chart")[0].proto.spec)
+    assert {"30-day at-the-money", "30-day variance swap", "20-day realized"} <= {
+        t["name"] for t in lines["data"]
+    }
+
+    # A summary written before vs_vol_30d existed (the deployed data, until it's rebuilt).
+    older = tmp_path / "older"
+    shutil.copytree(data.LOCAL_DIR, older)
+    store.write_summary(older, store.read_summary(older).drop(columns="vs_vol_30d"))
+    monkeypatch.setattr(data, "LOCAL_DIR", older)
+    st.cache_data.clear()
+    app = open_page(VOLATILITY, "History")
+    lines = json.loads(app.get("plotly_chart")[0].proto.spec)
+    assert "30-day variance swap" not in {t["name"] for t in lines["data"]}
+
+
 def test_model_page_before_any_fits(tmp_path, monkeypatch):
     monkeypatch.setattr(data, "LOCAL_DIR", build_dataset(tmp_path / "data", fitted=False))
     app = open_page(MODELS)
@@ -275,6 +293,11 @@ def test_exotics_page_prices_under_all_three_models():
     assert abs(bs["Price"] - bs["Black-Scholes formula"]) < bs["± 95%"] * 2  # 4 standard errors
     reductions = app.dataframe[1].value.set_index("Method")["Variance reduction"]
     assert reductions["Sobol + PCA + control variate"] > reductions["Plain Monte Carlo"]
+    assert app.dataframe[1].value["Paths"].max() == 32_000  # the table is the largest run only
+    errors = json.loads(app.get("plotly_chart")[-1].proto.spec)  # error against paths
+    assert [t["name"] for t in errors["data"]] == list(reductions.index)
+    for trace in errors["data"]:
+        assert len(trace["x"]) == 3 and trace["y"] == sorted(trace["y"], reverse=True), trace["name"]
 
 
 def test_exotics_page_barrier_controls():

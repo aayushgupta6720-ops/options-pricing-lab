@@ -110,6 +110,28 @@ def test_variance_reduction_methods_agree_and_reduce_variance():
     )
 
 
+def test_a_control_that_never_varies_is_left_out_instead_of_giving_nan():
+    # 4,000 paths in 16 Sobol sets of 250, 5% out of the money over 22 days: some sets have no
+    # geometric payoff at all, and the control's variance is zero.
+    rows = {
+        r["method"]: r for r in ex.variance_reduction(24_900, 26_145, 22 / 365, 0.055, 0.012, 0.14, 22, 4_000)
+    }
+    assert all(np.isfinite(r["price"]) and np.isfinite(r["std_error"]) for r in rows.values())
+
+
+def test_the_control_variate_factor_holds_at_any_path_count_but_sobol_grows():
+    def factors(n):
+        return {
+            r["method"]: r["variance_reduction"]
+            for r in ex.variance_reduction(S, 100.0, T, R, Q, SIGMA, 50, n, seed=21)
+        }
+
+    small, large = factors(4_000), factors(64_000)
+    cv = "Control variate (geometric Asian)"
+    assert 0.6 < large[cv] / small[cv] < 1.6
+    assert large["Sobol + PCA paths"] > 4 * small["Sobol + PCA paths"]
+
+
 def test_invalid_exotics_are_rejected():
     with pytest.raises(ValueError):
         Exotic("barrier", "call", 100.0)

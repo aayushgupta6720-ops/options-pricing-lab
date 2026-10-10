@@ -18,11 +18,11 @@ own link, e.g. [/pricer?tab=Convergence](https://options-pricing-lab.onrender.co
 
 | Page | What it shows |
 |---|---|
-| **Implied volatility** | *Surface:* for any trading day, the smile per expiry, the at-the-money and 25-delta term structure, and a 3D surface, with spot, 30-day implied vol, 30-day skew, realized vol and India VIX and their day-on-day changes. *History:* 30-day implied vs 20-day realized vol vs India VIX, the term structure and skew over time, and how often implied vol overpriced the volatility that followed. |
+| **Implied volatility** | *Surface:* for any trading day, the smile per expiry, the at-the-money and 25-delta term structure, and a 3D surface, with spot, 30-day implied vol, 30-day skew, realized vol and India VIX and their day-on-day changes. *History:* 30-day at-the-money and variance-swap vol vs 20-day realized vol vs India VIX, the term structure and skew over time, and the variance premium against the volatility that followed. |
 | **Models vs market** | *Heston & SABR:* Heston (one set of five parameters per day for the whole surface) and SABR (one smile per expiry) fitted to every trading day: the fitted parameters, each model against the market's smile, a heatmap of where Heston misses, SABR's parameters by expiry, and how Heston's parameters moved over two years. *Rough volatility:* rough Bergomi against Heston on NIFTY's short expiries: the at-the-money skew against maturity on log-log axes (a power law is a straight line), short-expiry smiles under both models, which model gets the smile's shape right by maturity, and the fitted roughness H over time. |
 | **Strategy builder** | Multi-leg positions (spreads, straddles, condors, butterflies, or your own legs) at the live index level for NIFTY and BANKNIFTY, else the last close (RELIANCE always uses the close). Each leg is priced at its strike's implied vol, with P&L in ₹ per lot, breakevens, max profit/loss and position Greeks. |
 | **Option pricer** | One option, set in the sidebar or loaded in one click as the at-the-money NIFTY option at the live index level. *Prices:* Black-Scholes, a binomial tree and Monte Carlo side by side, Greeks, the early-exercise premium for American options, and an implied-vol calculator. *Greeks:* each Greek against spot, volatility or time to expiry. *Convergence:* the tree's error against steps (≈1/n) and Monte Carlo's confidence interval against paths (≈1/√n). *Heston model:* sliders for Heston's five parameters (preloaded with the latest NIFTY fit), the smile and term structure they produce, and a Monte Carlo check against the formula. |
-| **Exotic options** | Asian, barrier and lookback options on the sidebar's option, priced by Monte Carlo under Black-Scholes, Heston and rough Bergomi side by side, with the Black-Scholes closed form as a check, and five variance-reduction methods compared. |
+| **Exotic options** | Asian, barrier and lookback options on the sidebar's option, priced by Monte Carlo under Black-Scholes, Heston and rough Bergomi side by side, with the Black-Scholes closed form as a check, and five variance-reduction methods compared, with each one's error against the number of paths. |
 
 Labels use plain names (mean reversion, vol of vol); the symbols and the method behind each chart
 are one click away, in the help icons and each page's *How this is computed* section.
@@ -34,9 +34,15 @@ From 562 trading days, 1 Jul 2024 to 5 Oct 2026, all computed from the published
 - **The pipeline tracks India VIX.** NIFTY's 30-day ATM vol has a 0.975 correlation with India VIX.
   VIX sits above it on 95% of days, by about 1 point. That's expected: VIX averages over the whole
   strip of strikes, including the expensive put wing.
-- **Implied vol usually overprices what follows.** 30-day ATM vol exceeded the next 20 days'
-  realized vol on 67% of days for NIFTY (median gap +1.4 points), 67% for BANKNIFTY (+1.6) and 56%
-  for RELIANCE (+0.65): the variance risk premium that option sellers collect.
+- **The variance risk premium is there, but 27 months can't pin it down.** Selling 30-day variance
+  at the variance-swap rate, replicated from each day's whole option strip as India VIX is, earned
+  about one vol point against the variance that followed: +0.95 for NIFTY, +0.78 for BANKNIFTY and
+  +1.34 for RELIANCE (546 days with a known outcome, to 9 Oct 2026). Consecutive days share most of
+  their 20-day window, so that's only about 27 independent periods, and the 95% block-bootstrap
+  intervals include zero for both indices (NIFTY −0.5 to +2.4). At the money there's no premium at
+  all (−0.35 to +0.28): it sits in the put wing. The familiar statistic, implied vol above what
+  followed on 67% of NIFTY days, says little: realized vol is right-skewed, and a constant forecast
+  at its average beats it on 66%.
 - **Index puts carry more crash premium than single-stock puts.** NIFTY's 25-delta skew averaged
   2.2 vol points against 1.2 for RELIANCE.
 - **Stress inverts the term structure.** On the 10% of days with the highest NIFTY 30-day vol, 90-day
@@ -103,9 +109,15 @@ wings), over all 562 days:
   a down-and-in put 4.7% below spot ₹159 against ₹205 and ₹198; a floating lookback put ₹593 against
   ₹525 and ₹538. The two smile-aware models agree within Monte Carlo error; flat volatility is what's
   off. Asians move much less (3–4%).
-- **Variance reduction changes what's affordable.** For an arithmetic Asian, a geometric-Asian control
-  variate cuts the variance per path by about 1,800×, Sobol points with a principal-component path
-  construction by about 7,600×, and both together by about 200,000× (one path doing the work of 200,000).
+- **Variance reduction depends on the option, and for Sobol on the path count.** For an arithmetic
+  Asian under Black-Scholes, a geometric-Asian control variate cuts the variance per path by a factor
+  that holds at any number of paths but swings with the option: about 1,300× for a 1-year
+  at-the-money Asian, 50,000× for a 22-day at-the-money NIFTY one, 2,000× for one 5% out of the money.
+  Sobol points with a principal-component path construction aren't a fixed factor at all: their error
+  falls faster than one over the square root of the paths, so their gain grows with them (330× at
+  4,000 paths, 9,600× at 32,000 for the 1-year Asian). The Exotic options page plots each method's
+  error against paths. Only the Asian has a control this good; the barrier, lookback, Heston and
+  rough Bergomi prices use plain Monte Carlo.
 
 | Implied volatility, History tab (dark theme) | Strategy builder |
 |---|---|
@@ -158,7 +170,7 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
 
 ## Testing
 
-225 tests run in CI (`ruff` + `pytest`, about 90 seconds, no network):
+232 tests run in CI (`ruff` + `pytest`, about 90 seconds, no network):
 
 - **Models:** Hull's textbook values for prices, Greeks and the 5-step American put; put-call
   parity; tree → Black-Scholes convergence, including the low-vol cases where the tree switches

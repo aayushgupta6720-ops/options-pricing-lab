@@ -158,20 +158,31 @@ st.plotly_chart(theme.style(fig, pal, 220), width="stretch")
 st.subheader("Getting more accuracy per path")
 st.caption(
     "The same arithmetic Asian (the sidebar's strike and expiry, Black-Scholes) priced five ways. Variance "
-    "reduction is per path, against plain Monte Carlo: 100× means plain Monte Carlo would need 100 times as "
-    "many paths for the same accuracy."
+    "reduction is per path, against plain Monte Carlo at the same number of paths: 100× means plain Monte "
+    "Carlo would need 100 times as many paths for the same accuracy."
 )
 if sigma <= 0:
     st.info("Set a volatility above zero in the sidebar.")
     st.stop()
 
 
+REDUCTION_PATHS = (2_000, 8_000, 32_000)  # the table shows the last
+
+
 @st.cache_data(show_spinner=False, max_entries=8)
 def reduction(S, K, T, r, q, sigma, kind, fixings):
-    return pd.DataFrame(ex.variance_reduction(S, K, T, r, q, sigma, fixings, 32_000, kind, seed=21))
+    # "paths" is what each method used (Sobol rounds down to a power of two per scrambled set).
+    return pd.DataFrame(
+        [
+            {**row, "run": n}
+            for n in REDUCTION_PATHS
+            for row in ex.variance_reduction(S, K, T, r, q, sigma, fixings, n, kind, seed=21)
+        ]
+    )
 
 
-vr = reduction(S, K, T, r, q, sigma, kind, min(days, 64))
+by_paths = reduction(S, K, T, r, q, sigma, kind, min(days, 64))
+vr = by_paths[by_paths["run"] == REDUCTION_PATHS[-1]].drop(columns="run").reset_index(drop=True)
 st.dataframe(
     vr.rename(
         columns={
@@ -214,6 +225,33 @@ st.caption(
     "Sobol points are best."
 )
 
+fig = go.Figure()
+for i, (method, runs) in enumerate(by_paths.groupby("method", sort=False)):
+    fig.add_trace(
+        go.Scatter(
+            x=runs["paths"].tolist(),
+            y=runs["std_error"].tolist(),
+            name=method,
+            mode="lines+markers",
+            line=dict(color=pal.series[i], width=charts.LINE),
+            hovertemplate="%{x:,} paths: %{y:.2e}<extra>" + method + "</extra>",
+        )
+    )
+charts.log_ticks(fig, "x", [1_000, 4_000, 16_000, 32_000])
+fig.update_xaxes(title_text="Paths (log scale)")
+fig.update_yaxes(type="log", exponentformat="power", dtick=1, title_text="Standard error (log scale)")
+st.subheader("Error against paths", help="Each method run with about 2,000, 8,000 and 32,000 paths.")
+fig = theme.style(fig, pal, 320)
+st.plotly_chart(fig, width="stretch")
+st.caption(
+    "Plain Monte Carlo, antithetic paths and the control variate all shrink their error as one over the square "
+    "root of the paths, so their lines run parallel: the control variate's factor holds at any number of paths, "
+    "though it swings with the option (about 1,300× for a 1-year at-the-money Asian, 50,000× for a 22-day one, "
+    "2,000× for a 22-day one 5% out of the money). Sobol points' error falls faster, so their factor grows with "
+    "the paths and isn't a property of the method. Only this Asian has a control this good: the barrier, lookback, "
+    "Heston and rough Bergomi prices above use plain Monte Carlo."
+)
+
 with st.expander("How this is computed"):
     st.markdown(
         f"""
@@ -224,6 +262,7 @@ with st.expander("How this is computed"):
   2,000 at a time to keep memory flat).
 - The Black-Scholes check uses closed forms: geometric Asians, barriers (Haug) and floating lookbacks
   (Goldman-Sosin-Gatto). There is none for the arithmetic Asian.
-- The variance-reduction table uses 32,000 paths per method and up to 64 fixings.
+- The variance-reduction table uses 32,000 paths per method and up to 64 fixings; the error chart reprices at
+  2,000 and 8,000 paths too. Sobol errors come from 16 independently scrambled sets.
 """
     )

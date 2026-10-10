@@ -83,3 +83,31 @@ def vs_vol_at(table: pd.DataFrame, days: float) -> float:
     if table.empty or not table["T"].iloc[0] <= T <= table["T"].iloc[-1]:
         return np.nan
     return float(np.sqrt(np.interp(T, table["T"], table["vs_var"] * table["T"]) / T))
+
+
+def premium(
+    fair_vol: pd.Series, realized_vol: pd.Series, block: int, n_boot: int = 2000, seed: int = 0
+) -> dict:
+    """What a seller of variance at `fair_vol` earned against the realized vol that followed: the
+    gap between the two as root-mean-square vols, in vol points, with a 95% interval.
+
+    Measured in variance, as a variance swap pays. The share of days implied vol beats what follows
+    is a poor measure: realized vol is right-skewed, so even a constant forecast at its average beats
+    it on about two days in three. Consecutive days share most of their realized window, so the
+    interval resamples blocks of `block` days (a moving-block bootstrap) rather than single days.
+    """
+    paired = pd.concat([fair_vol, realized_vol], axis=1).dropna().to_numpy()
+    n = len(paired)
+    if n < 2 * block:
+        return {"premium": np.nan, "low": np.nan, "high": np.nan, "days": n}
+    fair2, real2 = paired[:, 0] ** 2, paired[:, 1] ** 2
+
+    def gap(index):
+        return np.sqrt(fair2[index].mean()) - np.sqrt(real2[index].mean())
+
+    rng = np.random.default_rng(seed)
+    starts = rng.integers(0, n - block + 1, size=(n_boot, -(-n // block)))
+    index = (starts[:, :, None] + np.arange(block)).reshape(n_boot, -1)[:, :n]
+    boot = np.sqrt(fair2[index].mean(axis=1)) - np.sqrt(real2[index].mean(axis=1))
+    low, high = np.percentile(boot, [2.5, 97.5])
+    return {"premium": float(gap(slice(None))), "low": float(low), "high": float(high), "days": n}

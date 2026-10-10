@@ -3,7 +3,8 @@
     python -m scripts.rebuild_summary --data-dir data
 
 Use after changing how the summary is derived (optlab/surface.py). Spot, India VIX, lot size and
-rate are kept; ATM vols, skew and quote counts are recomputed; realized vol is recomputed on write.
+rate are kept; ATM vols, skew, the variance-swap vol and quote counts are recomputed, and a column
+the summary didn't have yet is added; realized vol is recomputed on write.
 """
 
 import argparse
@@ -38,7 +39,10 @@ def main(argv=None) -> int:
 
     rebuilt = pd.DataFrame(rows)
     changed = {}
-    for column in [c for c in rebuilt.columns if c.startswith(("atm_iv", "skew"))]:
+    for column in [c for c in rebuilt.columns if c.startswith(("atm_iv", "skew", "vs_vol"))]:
+        if column not in summary:
+            changed[column] = "added"
+            continue
         before = summary.set_index(["trade_date", "underlying"])[column]
         after = rebuilt.set_index(["trade_date", "underlying"])[column]
         diff = ~np.isclose(before, after.reindex(before.index), equal_nan=True)

@@ -80,3 +80,38 @@ def test_real_nifty_day_sits_near_india_vix():
     assert vs30 == pytest.approx(0.1446, abs=0.01)  # India VIX closed at 14.46 that day
     atm = expiry_metrics(chain).set_index("expiry")["atm_iv"]
     assert (table["vs_vol"].to_numpy() > table["expiry"].map(atm).to_numpy()).all()  # skew premium
+
+
+# --- the variance premium -------------------------------------------------------------------
+
+
+def test_premium_is_the_gap_in_root_mean_square_vol():
+    realized = pd.Series(np.full(100, 0.12))
+    result = variance.premium(pd.Series(np.full(100, 0.15)), realized, block=20)
+    assert result["premium"] == pytest.approx(0.03) and result["days"] == 100
+    assert result["low"] == pytest.approx(0.03) and result["high"] == pytest.approx(0.03)
+
+
+def test_premium_is_measured_in_variance_so_spikes_count_fully():
+    # Implied beats realized on 90% of days, but the spikes on the other 10% cost more: a variance
+    # seller lost money, which the share of days would have hidden.
+    realized = pd.Series(np.tile([0.10] * 9 + [0.40], 20))
+    implied = pd.Series(np.full(200, 0.14))
+    result = variance.premium(implied, realized, block=20)
+    assert (implied > realized).mean() == 0.9
+    assert result["premium"] < 0
+
+
+def test_premium_interval_reflects_overlapping_windows():
+    rng = np.random.default_rng(3)
+    shocks = pd.Series(rng.normal(0, 0.03, 600)).rolling(20, min_periods=1).mean()  # strongly autocorrelated
+    realized = 0.13 + shocks
+    implied = realized.mean() + 0.01 + 0 * realized
+    result = variance.premium(implied, realized, block=20)
+    assert result["low"] < result["premium"] < result["high"]
+    assert variance.premium(implied, realized, block=20) == result  # seeded, so it repeats
+
+
+def test_premium_needs_two_blocks_of_paired_days():
+    short = pd.Series([0.15] * 30)
+    assert np.isnan(variance.premium(short, short.shift(5), block=20)["premium"])

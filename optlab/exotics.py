@@ -418,8 +418,11 @@ def _asian_payoffs(log_s, K, kind):
 
 
 def _with_control(y, x, x_mean):
-    """Control-variate estimate: subtract beta (X - E[X]), beta fitted on the same sample."""
-    beta = np.cov(y, x)[0, 1] / np.var(x, ddof=1)
+    """Control-variate estimate: subtract beta (X - E[X]), beta fitted on the same sample. A control
+    that never varies (every geometric payoff zero, as for a small batch far out of the money)
+    carries no information, so it's left out rather than dividing by zero."""
+    var_x = np.var(x, ddof=1)
+    beta = np.cov(y, x)[0, 1] / var_x if var_x > 0 else 0.0
     return y - beta * (x - x_mean)
 
 
