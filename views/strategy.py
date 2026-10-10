@@ -44,17 +44,20 @@ preset = c3.selectbox("Strategy", presets, index=presets.index("Iron condor"), k
 
 quotes = chain[chain["expiry"] == expiry].sort_values("log_moneyness")
 spot, forward, T, r = (float(quotes[c].iloc[0]) for c in ("spot", "forward", "T", "r"))
+vol_shift = 0.0
 if quote:
     # Live: the same carry rate over the time that's left now, applied to the live price. Vols are
-    # read off the close's smile at each strike's moneyness against this forward (sticky moneyness).
+    # read off the close's smile at each strike's moneyness against this forward, then moved by
+    # how at-the-money vol has moved with the index (data.vol_shift): on a falling day, vol rises.
     days_now = (expiry - today).days
     forward = quote.price * strategy.forward_ratio_at(forward / spot, T, days_now / 365)
+    slope, vol_shift = data.vol_shift(underlying, days_now, quote.price, spot)
     spot, T = quote.price, days_now / 365
 lot = int(quotes["lot_size"].iloc[0])
 
 price_line = (
     f"{underlying} {spot:,.2f}, live from {quote.source} at {quote.time:%H:%M} IST on {quote.time:%d %b %Y}. "
-    f"Vols from the {as_of:%d %b} close's smile."
+    + data.smile_note(as_of, slope, vol_shift).replace("Vol from", "Vols from")
     if quote
     else f"{underlying} {spot:,.2f}, the close on {as_of:%d %b %Y}."
 )
@@ -117,7 +120,7 @@ legs = [
 
 # Each strike's vol from the smile (flat beyond the quoted range); calls and puts at one strike share it.
 log_k = np.log(np.array([leg.strike for leg in legs]) / forward)
-vols = np.interp(log_k, quotes["log_moneyness"], quotes["iv"])
+vols = np.maximum(np.interp(log_k, quotes["log_moneyness"], quotes["iv"]) + vol_shift, 0.01)
 ratio = forward / spot
 prices = strategy.leg_prices(legs, spot, ratio, T, r, vols)
 net = strategy.premium(legs, prices)

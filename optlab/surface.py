@@ -142,3 +142,32 @@ def smile_grid(chain: pd.DataFrame, grid: np.ndarray, standardised: bool = False
         if len(g) >= 3:
             out[expiry] = [_interp_inside(v, x, g["iv"]) for v in grid]
     return pd.DataFrame.from_dict(out, orient="index", columns=grid)
+
+
+# --- How the smile moves with spot -----------------------------------------------------------
+
+SLOPE_WINDOW = 250  # trading days, about a year
+SLOPE_MIN_DAYS = 60
+
+
+def spot_vol_slope(rows: pd.DataFrame, days: float, window: int = SLOPE_WINDOW) -> float:
+    """How at-the-money implied vol has moved with the underlying: the least-squares slope of the
+    day-to-day change in ATM vol, at the tenor nearest `days`, on that day's log return (bonus
+    issues taken out), over the last `window` trading days. For NIFTY it's about -0.9: a 1% fall
+    has come with about 0.9 vol points more.
+
+    A live price uses it to move the close's smile: reading the smile at the same moneyness (sticky
+    moneyness) assumes a slope of 0, and so prices options too cheap on a falling day. Too little
+    history gives 0, which keeps that assumption.
+    """
+    from optlab.market.store import adjusted_log_returns
+
+    tenor = min(config.TENORS, key=lambda d: abs(d - days))
+    r = rows.sort_values("trade_date").tail(window + 1).reset_index(drop=True)
+    returns = adjusted_log_returns(r["spot"], r["lot_size"] if "lot_size" in r else None)
+    change = r[f"atm_iv_{tenor}d"].diff()
+    ok = returns.notna() & change.notna()
+    if ok.sum() < SLOPE_MIN_DAYS:
+        return 0.0
+    x, y = returns[ok], change[ok]
+    return float(((x - x.mean()) * (y - y.mean())).sum() / ((x - x.mean()) ** 2).sum())

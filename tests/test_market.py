@@ -363,3 +363,19 @@ def test_india_vix_is_cached(tmp_path, monkeypatch):
     assert nse.india_vix(TRADE_DATE, cache_dir=tmp_path) == pytest.approx(0.1446)
     assert nse.india_vix(TRADE_DATE, cache_dir=tmp_path) == pytest.approx(0.1446)
     assert len(calls) == 1
+
+
+def test_spot_vol_slope_recovers_how_vol_moved_with_spot():
+    from optlab.surface import spot_vol_slope
+
+    rng = np.random.default_rng(0)
+    returns = rng.normal(0, 0.01, 300)
+    rows = pd.DataFrame({
+        "trade_date": pd.date_range("2025-01-01", periods=300).date,
+        "spot": 20_000 * np.exp(np.cumsum(returns)),
+        "atm_iv_30d": 0.13 - 0.9 * np.cumsum(returns) + rng.normal(0, 0.0005, 300),
+        "lot_size": 75,
+    })  # fmt: skip
+    assert spot_vol_slope(rows, 30) == pytest.approx(-0.9, abs=0.05)
+    assert spot_vol_slope(rows, 25) == spot_vol_slope(rows, 30)  # the nearest tenor
+    assert spot_vol_slope(rows.head(40), 30) == 0.0  # too little history: the smile stays put

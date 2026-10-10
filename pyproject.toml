@@ -12,3 +12,4 @@ testpaths = ["tests"]
 [tool.ruff.lint.per-file-ignores]
 # numba's compiled code has its own np.random (seeded per call); it doesn't take Generator objects
 "optlab/exotics.py" = ["NPY002"]
+"optlab/local_vol.py" = ["NPY002"]  # numba kernels only support the legacy np.random API

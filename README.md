@@ -22,7 +22,7 @@ own link, e.g. [/pricer?tab=Convergence](https://options-pricing-lab.onrender.co
 | **Models vs market** | *Heston & SABR:* Heston (one set of five parameters per day for the whole surface) and SABR (one smile per expiry) fitted to every trading day: the fitted parameters, each model against the market's smile, a heatmap of where Heston misses, SABR's parameters by expiry, and how Heston's parameters moved over two years. *Rough volatility:* rough Bergomi against Heston on NIFTY's short expiries: the at-the-money skew against maturity on log-log axes (a power law is a straight line), short-expiry smiles under both models, which model gets the smile's shape right by maturity, and the fitted roughness H over time. |
 | **Strategy builder** | Multi-leg positions (spreads, straddles, condors, butterflies, or your own legs) at the live index level for NIFTY and BANKNIFTY, else the last close (RELIANCE always uses the close). Each leg is priced at its strike's implied vol, with P&L in ₹ per lot, breakevens, max profit/loss and position Greeks. |
 | **Option pricer** | One option, set in the sidebar or loaded in one click as the at-the-money NIFTY option at the live index level. *Prices:* Black-Scholes, a binomial tree and Monte Carlo side by side, Greeks, the early-exercise premium for American options, and an implied-vol calculator. *Greeks:* each Greek against spot, volatility or time to expiry. *Convergence:* the tree's error against steps (≈1/n) and Monte Carlo's confidence interval against paths (≈1/√n). *Heston model:* sliders for Heston's five parameters (preloaded with the latest NIFTY fit), the smile and term structure they produce, and a Monte Carlo check against the formula. |
-| **Exotic options** | Asian, barrier and lookback options on the sidebar's option, priced by Monte Carlo under Black-Scholes, Heston and rough Bergomi side by side, with the Black-Scholes closed form as a check, and five variance-reduction methods compared, with each one's error against the number of paths. |
+| **Exotic options** | Asian, barrier and lookback options on the sidebar's option, priced by Monte Carlo under Black-Scholes, Heston, local volatility (Dupire, built from the Heston fit) and rough Bergomi side by side, with the Black-Scholes closed form as a check, and five variance-reduction methods compared, with each one's error against the number of paths. |
 
 Labels use plain names (mean reversion, vol of vol); the symbols and the method behind each chart
 are one click away, in the help icons and each page's *How this is computed* section.
@@ -103,12 +103,15 @@ wings), over all 562 days:
 
 ### Exotics
 
-- **Barriers depend on the smile, not just the ATM vol.** On 22-day NIFTY options (5 Oct 2026, the
-  latest Heston and rough Bergomi fits, Black-Scholes at the 14.1% ATM vol), an up-and-out call with its
-  barrier 4.6% above spot is worth ₹109 under Black-Scholes and ₹155 under both Heston and rough Bergomi;
-  a down-and-in put 4.7% below spot ₹159 against ₹205 and ₹198; a floating lookback put ₹593 against
-  ₹525 and ₹538. The two smile-aware models agree within Monte Carlo error; flat volatility is what's
-  off. Asians move much less (3–4%).
+- **Barriers carry model risk the vanilla market can't settle.** On 22-day NIFTY options (5 Oct 2026),
+  an up-and-out call with its barrier 4.6% above spot is worth ₹109 under Black-Scholes at the 14.1% ATM
+  vol, ₹137 under local vol and ₹157 under Heston (rough Bergomi ₹155). Local vol is built from that Heston
+  fit and prices every vanilla option the same, so the ₹20 between them comes from the dynamics alone:
+  Heston's smile moves with its random variance, local vol's is fixed. The ordering isn't fixed either: a
+  down-and-in put 4.7% below spot is ₹156, ₹210 and ₹203, and a floating lookback put ₹590, ₹582 and
+  ₹522. 5 Oct was the most extreme day: over the last 25 NIFTY fits the up-and-out call was a median 24%
+  above Black-Scholes under Heston (3% to 41%) and 15% under local vol (0% to 27%). Asians move much less
+  (3–4%).
 - **Variance reduction depends on the option, and for Sobol on the path count.** For an arithmetic
   Asian under Black-Scholes, a geometric-Asian control variate cuts the variance per path by a factor
   that holds at any number of paths but swings with the option: about 1,300× for a 1-year
@@ -165,12 +168,14 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
   at most once a minute per underlying, leaves a source alone for 10 minutes after it refuses, and
   uses the price only when it's later than the last close in the dataset; otherwise, and whenever
   neither source answers, it falls back to that close. A live option takes its vol from the last
-  close's smile at the same moneyness, and the Option pricer and Strategy builder say so.
+  close's smile at the same moneyness, moved by how at-the-money vol has moved with the index over the
+  last year (`optlab.surface.spot_vol_slope`: about −1.15 vol points per +1% for NIFTY's 30-day vol), so
+  a falling day prices options dearer; the Option pricer and Strategy builder say by how much.
 - The maths, and what each piece is checked against, is in [docs/models.md](docs/models.md).
 
 ## Testing
 
-232 tests run in CI (`ruff` + `pytest`, about 90 seconds, no network):
+238 tests run in CI (`ruff` + `pytest`, about 90 seconds, no network):
 
 - **Models:** Hull's textbook values for prices, Greeks and the 5-step American put; put-call
   parity; tree → Black-Scholes convergence, including the low-vol cases where the tree switches
@@ -236,8 +241,8 @@ git worktree add data market-data
 - **End-of-day smiles, live index level.** The bhavcopy has closing prices, not bid/ask, so the
   surface, the smiles and the model fits update once a day. Closes are NSE's volume-weighted average
   of the last half hour, which keeps options and the underlying roughly in step. During market hours
-  the Option pricer and Strategy builder move NIFTY and BANKNIFTY to the live index level, but still
-  read volatility off the last close's smile.
+  the Option pricer and Strategy builder move NIFTY and BANKNIFTY to the live index level, and move the
+  last close's smile by the index's historical spot-vol slope rather than re-reading it intraday.
 - **Liquidity filter.** Quotes need 20+ trades and a price of at least ₹0.50, so far wings and
   long-dated expiries are thin. NIFTY lists options out to 2031 but only the first year or so trades.
 - **Rate.** A single 5.5% rate (the 91-day T-bill in September 2026) is used throughout. Forwards come

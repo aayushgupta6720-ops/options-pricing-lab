@@ -256,20 +256,23 @@ def _kernels():
             out[3, p], out[4, p], out[5, p] = np.exp(lo), np.exp(hi), survive
         return out
 
-    _KERNELS.update(gbm=gbm, heston=heston)
+    _KERNELS.update(gbm=gbm, heston=heston, bridge_update=bridge_update)
     return _KERNELS
 
 
 def warm_up():
     """Compile the kernels now (Render's build runs this), so numba's on-disk cache ships with the
     app and a cold start doesn't spend its first exotic price compiling."""
+    from optlab import local_vol
     from optlab.models.heston import HestonParams
 
+    flat = local_vol.LocalVolSurface(np.array([0.0, 1.0]), np.array([-1.0, 1.0]), np.full((2, 2), 0.2))
     for barrier in (None, 90.0):
         stats_black_scholes_numba(100.0, 0.1, 0.05, 0.0, 0.2, 2, 2, seed=0, barrier=barrier)
         stats_heston_numba(
             100.0, 0.1, 0.05, 0.0, HestonParams(0.04, 2.0, 0.04, 0.5, -0.5), 2, 2, seed=0, barrier=barrier
         )
+        local_vol.stats_local_vol_numba(100.0, 0.1, 0.05, 0.0, flat, 2, 2, seed=0, barrier=barrier)
 
 
 def _stats(out: np.ndarray) -> PathStats:

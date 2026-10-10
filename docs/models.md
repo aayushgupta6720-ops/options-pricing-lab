@@ -160,6 +160,12 @@ like the VIX (each strike weighted by half the distance to its neighbours). Inte
 variance to 30 days reproduces India VIX: over 562 days, correlation 0.979, 0.30 points below it on
 average (the strip stops at the quoted strikes), 0.45 points off on a typical day.
 
+The daily summary keeps it as `vs_vol_30d`, and the History tab sets it against the variance that
+followed (`variance.premium`): $\sqrt{\overline{\sigma^2_{VS}}} - \sqrt{\overline{RV^2}}$ in vol
+points, with a 95% interval from a moving-block bootstrap with 20-day blocks, since consecutive days
+share most of their realized window. The share of days implied beat realized isn't used: realized vol is
+right-skewed, so even a constant forecast at its average wins about two days in three.
+
 ## Rough Bergomi (`optlab/models/rough_bergomi.py`)
 
 $$V_t = \xi_0(t)\exp\Big(\eta Y_t - \tfrac{\eta^2}{2}t^{2H}\Big), \qquad Y_t = \sqrt{2H}\int_0^t (t - s)^{H - 1/2}dW_s, \qquad \frac{dS_t}{S_t} = \sqrt{V_t}\,dB_t, \quad B = \rho W + \sqrt{1 - \rho^2}W^\perp$$
@@ -204,7 +210,7 @@ what roughness is about.
 ## Exotic options (`optlab/exotics.py`)
 
 Asian (arithmetic and geometric averages over the fixings), barrier (up/down, in/out) and
-floating-strike lookback options, on paths from Black-Scholes, Heston or rough Bergomi.
+floating-strike lookback options, on paths from Black-Scholes, Heston, local volatility or rough Bergomi.
 
 **Continuous monitoring from daily fixings.** Between fixings the log-price is treated as a Brownian
 bridge with that interval's variance (exact under Black-Scholes; the interval's realised variance
@@ -225,6 +231,32 @@ history (the Volterra integral), so it stays in numpy with an FFT. numba is impo
 exotic is priced.
 
 **Variance reduction** (arithmetic Asian, Black-Scholes), measured as variance per path against plain
-Monte Carlo: antithetic paths about 2×; the geometric Asian as a control variate (closed form, and it
-moves almost in lockstep with the arithmetic average) about 1,800×; scrambled Sobol points with a
-principal-component path construction about 7,600×; both together about 200,000×.
+Monte Carlo at the same number of paths: antithetic paths about 2×. The geometric Asian as a control
+variate (closed form, and it moves almost in lockstep with the arithmetic average) gives a factor that
+holds at any number of paths but depends on the option: about 1,300× for a 1-year at-the-money Asian,
+50,000× for a 22-day one, 2,000× for one 5% out of the money. Scrambled Sobol points with a
+principal-component path construction aren't a fixed factor: their error falls faster than
+$1/\sqrt{N}$, so the gain grows with $N$ (330× at 4,000 paths, 9,600× at 32,000, for the 1-year
+Asian). The Exotic options page plots each method's error against paths.
+
+## Local volatility (`optlab/local_vol.py`)
+
+Dupire's local vol reproduces every European price on a surface. In total implied variance
+$w(y, T) = \sigma_{imp}^2 T$, with $y = \ln(K/F_T)$ (Gatheral, *The Volatility Surface*, 2006):
+
+$$\sigma_{LV}^2(T, y) = \frac{\partial_T w}{1 - \frac{y}{w}\partial_y w + \frac{1}{4}\left(-\frac{1}{4} - \frac{1}{w} + \frac{y^2}{w^2}\right)(\partial_y w)^2 + \frac{1}{2}\partial_{yy} w}$$
+
+It's built from the day's Heston fit, whose implied-vol surface is smooth in both strike and maturity:
+Heston prices on a grid of 40 maturities and 121 log-strikes (±0.6), inverted to implied vols, held flat
+beyond 5 standard deviations (prices there are too small to invert reliably), then differentiated
+numerically. Where the denominator or the calendar slope isn't positive, the vol is filled from the
+nearest good strike, within [1%, 200%]. Paths run in a numba kernel with 4 Euler steps per fixing,
+reading $\sigma_{LV}$ at the path's current time and log-moneyness against the forward.
+
+Checked against: a flat implied surface gives a flat local vol; Monte Carlo under the local vol built
+from a Heston fit reprices that fit's European options at three strikes within Monte Carlo error; and
+under a flat surface a barrier prices at the Black-Scholes closed form.
+
+Because local vol and Heston agree on every vanilla option, the gap between their exotic prices is the
+model risk the vanilla market can't settle: on 5 Oct 2026 an up-and-out NIFTY call was ₹137 under local
+vol against ₹157 under Heston.

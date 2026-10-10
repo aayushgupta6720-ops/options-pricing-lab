@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from optlab import exotics as ex
+from optlab import local_vol
 from optlab.exotics import Exotic
 from ui import charts, data, theme
 
@@ -14,9 +15,10 @@ pal = theme.current()
 
 st.title("Exotic options")
 st.caption(
-    "Options whose payoff depends on the whole price path, priced by Monte Carlo under three models: Black-Scholes "
-    "at the sidebar's volatility, and Heston and rough Bergomi at their latest NIFTY fits. The rest of the option "
-    "comes from the sidebar."
+    "Options whose payoff depends on the whole price path, priced by Monte Carlo under four models: Black-Scholes "
+    "at the sidebar's volatility; Heston and rough Bergomi at their latest NIFTY fits; and local volatility built "
+    "from that Heston fit, which prices every vanilla option the same as Heston does. The rest of the option comes "
+    "from the sidebar."
 )
 
 days = round(spec.T * 365)
@@ -67,6 +69,11 @@ def priced(model: str, exotic: Exotic, S, T, r, q, sigma, model_row: dict | None
         stats = ex.stats_heston_numba(
             S, T, r, q, params, HESTON_PATHS, exotic.fixings, seed=12, barrier=exotic.barrier
         )
+    elif model == "Local vol":
+        surface = local_vol.from_heston(data.heston_params(model_row), T)
+        stats = local_vol.stats_local_vol_numba(
+            S, T, r, q, surface, HESTON_PATHS, exotic.fixings, seed=13, barrier=exotic.barrier
+        )
     else:
         params, xi = data.rough_model(model_row)
         stats = ex.stats_rough_bergomi(S, T, r, q, params, xi, rough_paths, rng=13, barrier=exotic.barrier)
@@ -88,6 +95,9 @@ except data.DataUnavailable:
 models = [("Black-Scholes", None, f"{sigma:.2%} vol")]
 if heston_row:
     models.append(("Heston", heston_row, f"NIFTY fit of {heston_row['trade_date']:%d %b %Y}"))
+    models.append(
+        ("Local vol", heston_row, f"Dupire, from the Heston fit of {heston_row['trade_date']:%d %b %Y}")
+    )
 if rough_row:
     if days <= 365:
         models.append(("Rough Bergomi", rough_row, f"NIFTY fit of {rough_row['trade_date']:%d %b %Y}"))
@@ -134,7 +144,8 @@ if len(table) > 1:
     spread = table["Price"].max() - table["Price"].min()
     notes.append(
         f"The models disagree by {spread:,.4f} ({spread / max(table['Price'].mean(), 1e-12):.0%} of the average): "
-        "for path-dependent payoffs the smile's dynamics matter, not just today's prices."
+        "for path-dependent payoffs the smile's dynamics matter, not just today's prices. Heston and local vol "
+        "agree on every vanilla option, so the gap between those two is model risk the vanilla market can't settle."
     )
 st.caption(" ".join(notes))
 
@@ -257,9 +268,13 @@ with st.expander("How this is computed"):
         f"""
 - Prices are fixed once a calendar day until expiry. Asians average those fixings; barriers and lookbacks are monitored
   continuously, with a Brownian-bridge correction between fixings.
-- Paths: {BS_PATHS:,} under Black-Scholes and {HESTON_PATHS:,} under Heston (full-truncation Euler), both
-  compiled with numba so no path is stored; {rough_paths:,} under rough Bergomi (the hybrid scheme, simulated
-  2,000 at a time to keep memory flat).
+- Paths: {BS_PATHS:,} under Black-Scholes and {HESTON_PATHS:,} each under Heston (full-truncation Euler) and
+  local vol, all compiled with numba so no path is stored; {rough_paths:,} under rough Bergomi (the hybrid
+  scheme, simulated 2,000 at a time to keep memory flat).
+- Local vol is Dupire's, from the Heston fit's implied-vol surface: total implied variance on a grid of 40
+  maturities and 121 log-strikes, differentiated numerically (Gatheral's form of the formula), with implied vol
+  held flat beyond 5 standard deviations, where Heston's prices are too small to invert reliably. A test checks
+  it reprices Heston's own vanilla options.
 - The Black-Scholes check uses closed forms: geometric Asians, barriers (Haug) and floating lookbacks
   (Goldman-Sosin-Gatto). There is none for the arithmetic Asian.
 - The variance-reduction table uses 32,000 paths per method and up to 64 fixings; the error chart reprices at

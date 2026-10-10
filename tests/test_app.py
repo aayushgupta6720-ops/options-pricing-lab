@@ -283,12 +283,12 @@ def test_rough_page_shows_the_fit_and_the_skew_term_structure():
     assert skew["layout"]["xaxis"]["type"] == "log" and skew["layout"]["yaxis"]["type"] == "log"
 
 
-def test_exotics_page_prices_under_all_three_models():
+def test_exotics_page_prices_under_all_four_models():
     app = open_page(EXOTICS)
     app.selectbox(key="ex_product").set_value("Asian (geometric average)").run()
     assert not app.exception
     table = app.dataframe[0].value.set_index("Model")
-    assert list(table.index) == ["Black-Scholes", "Heston", "Rough Bergomi"]
+    assert list(table.index) == ["Black-Scholes", "Heston", "Local vol", "Rough Bergomi"]
     bs = table.loc["Black-Scholes"]
     assert abs(bs["Price"] - bs["Black-Scholes formula"]) < bs["± 95%"] * 2  # 4 standard errors
     reductions = app.dataframe[1].value.set_index("Method")["Variance reduction"]
@@ -306,7 +306,7 @@ def test_exotics_page_barrier_controls():
     assert not app.exception
     assert app.segmented_control(key="ex_knock").value == "out"
     app.segmented_control(key="ex_knock").set_value("in").run()
-    assert not app.exception and len(app.dataframe[0].value) == 3
+    assert not app.exception and len(app.dataframe[0].value) == 4
 
 
 def test_pricer_loads_the_live_at_the_money_option(monkeypatch):
@@ -321,6 +321,15 @@ def test_pricer_loads_the_live_at_the_money_option(monkeypatch):
     assert ss["in_days"] == (expiry - date(2026, 10, 2)).days
     assert "NSE close" not in metrics(app)  # no closing price to compare a live option with
     assert not app.exception
+
+
+def test_a_live_price_moves_the_vol_by_how_vol_has_moved_with_the_index(monkeypatch):
+    serve_live(monkeypatch, move=0.02)
+    flat = open_page(PRICER).session_state["in_sigma"]  # this dataset is too short for a slope: 0
+    monkeypatch.setattr(data.surface, "spot_vol_slope", lambda rows, days: -1.0)
+    app = open_page(PRICER)
+    assert app.session_state["in_sigma"] == pytest.approx(flat - 100 * np.log(1.02), abs=0.01)
+    assert captions(app.sidebar, "moved -1.98 vol pts for the move since")
 
 
 @pytest.mark.parametrize(

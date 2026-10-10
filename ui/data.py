@@ -24,7 +24,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from optlab import config
+from optlab import config, surface
 from optlab.market import live
 from optlab.market.store import (
     HESTON_FITS,
@@ -248,14 +248,32 @@ def market_option(underlying: str = "NIFTY", min_days: int = 20) -> dict | None:
     kind = "call" if K >= F else "put"
     smile = ch.sort_values("log_moneyness")
     label = f"{underlying} {K:,.0f} {kind}, {expiry:%d %b %Y}"
+    slope, shift = vol_shift(underlying, days, quote.price, S)
+    sigma = float(np.interp(np.log(K / F), smile["log_moneyness"], smile["iv"]))
     return common | {
         "label": label,
         "S": quote.price,
         "K": K,
         "days": days,
-        "sigma": float(np.interp(np.log(K / F), smile["log_moneyness"], smile["iv"])),
+        "sigma": max(sigma + shift, 0.01),
         "kind": kind,
         "live": quote,
         "note": f"Loaded {label} at {underlying} {quote.price:,.2f}, live from {quote.source} at "
-        f"{quote.time:%H:%M} IST on {quote.time:%d %b}. Vol from the {day:%d %b} close's smile.",
+        f"{quote.time:%H:%M} IST on {quote.time:%d %b}. {smile_note(day, slope, shift)}",
     }
+
+
+def vol_shift(underlying: str, days: float, live_price: float, close: float) -> tuple[float, float]:
+    """How far to move the close's smile for a live price: the underlying's recent spot-vol slope
+    (optlab.surface.spot_vol_slope) times the log move since the close. Returns (slope, shift)."""
+    slope = surface.spot_vol_slope(rows_for(underlying), days)
+    return slope, slope * float(np.log(live_price / close))
+
+
+def smile_note(close_day: date, slope: float, shift: float) -> str:
+    if slope == 0:
+        return f"Vol from the {close_day:%d %b} close's smile."
+    return (
+        f"Vol from the {close_day:%d %b} close's smile, moved {100 * shift:+.2f} vol pts for the move since "
+        f"(at-the-money vol has moved {slope:+.2f} pts per +1% over the last year)."
+    )

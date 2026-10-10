@@ -11,7 +11,7 @@ MARKER = 8
 # Each model keeps one colour on every page. Only the first three palette slots are used, since
 # they're the ones that stay distinguishable in any combination (slot 4, yellow, is too close to
 # orange). Market data and Black-Scholes never share a chart, nor do SABR and rough Bergomi.
-MODEL_SLOTS = {"Market": 0, "Black-Scholes": 0, "SABR": 1, "Rough Bergomi": 1, "Heston": 2}
+MODEL_SLOTS = {"Market": 0, "Black-Scholes": 0, "SABR": 1, "Rough Bergomi": 1, "Heston": 2, "Local vol": 3}
 
 
 def log_ticks(fig: go.Figure, axis: str, values, suffix=""):
