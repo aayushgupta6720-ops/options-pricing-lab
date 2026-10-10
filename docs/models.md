@@ -147,6 +147,10 @@ at vols no diffusion produces, and a handful of them would dominate any fit.
   8-day half-life): with only a few monthly expiries, the data can't separate faster mean reversion
   from higher vol of vol, and uncapped fits drift to values like a one-day half-life for small gains.
   Reported error is the RMSE of the model's implied vols against the market's over the fitted quotes.
+  With a previous day's fit, the residuals also include $\sqrt{\lambda}$ times the change in
+  $(\ln\kappa, \ln\xi, \operatorname{atanh}\rho)$ from it, with $\lambda = 10^{-4}$: $\kappa$ and $\theta$
+  trade off along a ridge, and unpenalised fits let NIFTY's $\kappa$ move by a median 26% a day. With
+  the penalty it moves 7.6%, for 0.01 vol points more error. $v_0$ and $\theta$ aren't penalised.
 
 Fits run in the daily job after ingest and are stored in `models/heston.parquet` and
 `models/sabr.parquet` on the `market-data` branch; the app only evaluates them, so a 0.1-CPU Render

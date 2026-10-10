@@ -13,6 +13,17 @@ distorting everything else. The fit starts from a few parameter sets (plus the p
 when there is one) and keeps the best. Fit quality is reported as the RMSE of the model's implied
 vols against the market's, in vol (0.01 = 1 point).
 
+Day to day, a surface pins kappa down poorly: kappa and theta trade off along a ridge, so unpenalised
+fits let NIFTY's kappa jump by a median 31% (in log) from one day to the next, ranging 1.6 to 8.7.
+With a previous day's fit, the structural parameters (log kappa, log xi, atanh rho) pay
+HESTON_STABILITY times their squared distance from it; v0 and theta, which move with the market,
+don't. On NIFTY's last 120 days that cut kappa's median daily move to 5.7% and xi's from 13.5% to
+6.0%, for a median fit error 0.009 vol points higher (0.287 against 0.278).
+
+The fits nearly always break the Feller condition (2 kappa theta >= xi^2): index skew needs a vol of vol
+too high for it. That's usual for equity-index Heston fits; the simulation (full truncation) keeps the
+variance from going negative, and the closed-form prices don't need the condition.
+
 Both fits use quotes between the 5-delta put and the 5-delta call. Further out, options trade at a
 few ticks as lottery tickets (a one-week NIFTY put 11 standard deviations out can close at Rs 0.85,
 an implied vol of 52%); no diffusion model produces those, and dividing by their near-zero vega
@@ -43,6 +54,7 @@ HESTON_BOUNDS = (
     np.array([1.5, 30.0, 1.5, 6.0, 0.99]),
 )
 HESTON_STARTS = ((2.0, 0.6, -0.6), (6.0, 1.5, -0.5), (1.0, 0.3, -0.8))  # kappa, xi, rho
+HESTON_STABILITY = 1e-4  # weight on the structural parameters' distance from the previous day's fit
 
 SABR_BOUNDS = (np.array([1e-3, -0.999, 1e-4]), np.array([5.0, 0.999, 50.0]))  # alpha, rho, nu
 SABR_STARTS = ((-0.6, 0.5), (-0.6, 3.0), (-0.1, 1.0), (-0.3, 8.0))  # rho, nu
@@ -163,11 +175,17 @@ def _price_inputs(chain: pd.DataFrame, min_days: float, max_days: float) -> list
     return inputs
 
 
-def _heston_residuals(x, expiries: list[_Expiry]) -> np.ndarray:
+def _structural(x) -> np.ndarray:
+    """kappa, xi and rho on scales where a step means the same everywhere."""
+    return np.array([np.log(x[1]), np.log(x[3]), np.arctanh(np.clip(x[4], -0.999, 0.999))])
+
+
+def _heston_residuals(x, expiries: list[_Expiry], anchor=None, stability: float = 0.0) -> np.ndarray:
     p = HestonParams(*x)
-    return np.concatenate(
-        [(heston.price(e.F, e.K, e.T, e.r, p, e.kind) - e.price) * e.scale for e in expiries]
-    )
+    misses = [(heston.price(e.F, e.K, e.T, e.r, p, e.kind) - e.price) * e.scale for e in expiries]
+    if anchor is not None and stability > 0:
+        misses.append(np.sqrt(stability) * (_structural(x) - _structural(anchor)))
+    return np.concatenate(misses)
 
 
 def _starting_points(expiries: list[_Expiry], chain: pd.DataFrame, previous: HestonParams | None):
@@ -190,8 +208,10 @@ def fit_heston(
     previous: HestonParams | None = None,
     min_days: float = HESTON_MIN_DAYS,
     max_days: float = HESTON_MAX_DAYS,
+    stability: float = HESTON_STABILITY,
 ) -> HestonFit | None:
-    """Fit one day's surface; None if fewer than two expiries have enough quotes."""
+    """Fit one day's surface; None if fewer than two expiries have enough quotes. With `previous`,
+    the structural parameters are held near it (see the module docstring; stability=0 turns that off)."""
     expiries = _price_inputs(chain, min_days, max_days)
     if len(expiries) < 2:
         return None
@@ -201,7 +221,7 @@ def fit_heston(
             result = least_squares(
                 _heston_residuals,
                 start,
-                args=(expiries,),
+                args=(expiries, None if previous is None else previous.as_array(), stability),
                 bounds=HESTON_BOUNDS,
                 method="trf",
                 diff_step=1e-6,  # well above the pricer's ~1e-11 relative noise

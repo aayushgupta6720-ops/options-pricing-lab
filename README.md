@@ -29,7 +29,8 @@ are one click away, in the help icons and each page's *How this is computed* sec
 
 ## Findings from the data
 
-From 562 trading days, 1 Jul 2024 to 5 Oct 2026, all computed from the published dataset:
+From 562 trading days, 1 Jul 2024 to 5 Oct 2026 unless a finding gives another window, all computed from the
+published dataset:
 
 - **The pipeline tracks India VIX.** NIFTY's 30-day ATM vol has a 0.975 correlation with India VIX.
   VIX sits above it on 95% of days, by about 1 point. That's expected: VIX averages over the whole
@@ -58,18 +59,24 @@ Heston fitted to expiries from a week to a year, SABR to each expiry, both betwe
 call, on every trading day since July 2024:
 
 - **SABR fits a single smile almost exactly; Heston fits the whole surface well.** Median error is
-  0.11 vol points for SABR (0.22 for RELIANCE) against 0.25–0.39 for Heston, which has to explain
+  0.11 vol points for SABR (0.22 for RELIANCE) against 0.26–0.40 for Heston, which has to explain
   every expiry with one set of five numbers.
 - **Heston's spot vol is the market's short-dated vol.** √v₀ has a 0.98 correlation with NIFTY's
-  7-day ATM vol and 0.95 with India VIX.
+  7-day ATM vol and 0.96 with India VIX.
 - **Stress steepens the skew.** NIFTY's spot-vol correlation ρ has a median of −0.38, falling to
-  −0.55 on the 10% of days with the highest 30-day vol; Heston's fit error also rises (0.33 → 0.57
+  −0.55 on the 10% of days with the highest 30-day vol; Heston's fit error also rises (0.34 → 0.59
   points). RELIANCE's ρ is only −0.12: single-stock smiles are flatter.
-- **The Feller condition fails almost every day** (96–100% of days): matching an index skew needs a
-  vol of vol large enough for the variance to touch zero.
+- **The Feller condition fails almost every day** (95–100% of days): matching an index skew needs a
+  vol of vol large enough for the variance to touch zero. That's usual for equity-index fits; the
+  simulation's full truncation keeps variance from going negative, and the closed form doesn't need it.
+- **Day-to-day fits are held steady.** Unpenalised, κ jumped by a median 26% from one NIFTY day to
+  the next (19% for BANKNIFTY), because κ and θ trade off along a ridge the surface barely constrains.
+  Each fit now pays for moving κ, ξ and ρ away from the previous day's (v₀ and θ move freely): κ's
+  median daily move fell to 7.6% for NIFTY and 2.9% for BANKNIFTY, ξ's from 13% to 6.4%, for 0.01–0.02
+  vol points more fit error.
 - **Monthly-only underlyings can't pin down mean reversion.** κ sits at its cap of 30 (an 8-day
-  half-life) on 57% of RELIANCE days and 18% of BANKNIFTY days, against 3% for NIFTY with its weekly
-  expiries. Letting it go higher lowers the error a little at the price of parameters like a
+  half-life) on 41% of RELIANCE days and 12% of BANKNIFTY days, against 1% for NIFTY with its weekly
+  expiries (57%, 18% and 3% before the day-to-day penalty). Letting it go higher lowers the error a little at the price of parameters like a
   one-day half-life.
 - **Expiries under a week need jumps.** Averaged over all NIFTY days, Heston's vols for expiries under
   a week (left out of the fit) are 1.2–1.3 points too low in the wings and 0.3 too high at the money:
@@ -175,7 +182,7 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
 
 ## Testing
 
-238 tests run in CI (`ruff` + `pytest`, about 90 seconds, no network):
+239 tests run in CI (`ruff` + `pytest`, about 90 seconds, no network):
 
 - **Models:** Hull's textbook values for prices, Greeks and the 5-step American put; put-call
   parity; tree → Black-Scholes convergence, including the low-vol cases where the tree switches

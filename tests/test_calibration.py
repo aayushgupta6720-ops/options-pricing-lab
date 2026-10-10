@@ -70,9 +70,8 @@ def test_heston_recovers_a_known_surface():
     assert fit.rmse < 2e-4  # 0.02 vol points
     assert fit.n_expiries == 5
     p = fit.params
-    assert p.v0 == pytest.approx(truth.v0, rel=0.05)
-    assert p.rho == pytest.approx(truth.rho, abs=0.05)
-    assert p.xi == pytest.approx(truth.xi, rel=0.15)
+    # every parameter, kappa and theta included: on a clean surface they're identified
+    np.testing.assert_allclose(p.as_array(), truth.as_array(), rtol=1e-3)
 
 
 def test_heston_warm_start_from_the_answer_stays_there():
@@ -80,6 +79,20 @@ def test_heston_warm_start_from_the_answer_stays_there():
     fit = calibration.fit_heston(heston_chain(truth), previous=truth)
     assert fit.rmse < 1e-5
     np.testing.assert_allclose(fit.params.as_array(), truth.as_array(), rtol=1e-3, atol=1e-4)
+
+
+def test_the_previous_days_fit_holds_the_structural_parameters_steady():
+    # Today's market is a little different from yesterday's fit. Unpenalised, kappa moves to
+    # whatever fits today exactly; held, it stays near yesterday's while the fit stays close.
+    yesterday = HestonParams(v0=0.02, kappa=3.0, theta=0.03, xi=0.8, rho=-0.6)
+    today = HestonParams(v0=0.022, kappa=4.5, theta=0.028, xi=0.85, rho=-0.62)
+    chain = heston_chain(today)
+    free = calibration.fit_heston(chain, previous=yesterday, stability=0.0)
+    held = calibration.fit_heston(chain, previous=yesterday)
+    assert free.params.kappa == pytest.approx(4.5, rel=1e-3)
+    assert abs(np.log(held.params.kappa / 3.0)) < abs(np.log(free.params.kappa / 3.0)) / 2
+    assert held.rmse < 0.002  # still within 0.2 vol points
+    assert held.params.v0 == pytest.approx(today.v0, rel=0.05)  # v0 isn't held: it follows the market
 
 
 def test_heston_needs_two_expiries_in_its_window():
@@ -100,7 +113,7 @@ def test_fits_a_real_nifty_day(nifty):
 
     fit = calibration.fit_heston(nifty)
     assert fit.n_expiries == 2  # the 5-day weekly is outside the Heston window
-    assert fit.rmse < 0.015
+    assert fit.rmse < 0.004  # 0.17 vol points on this day; the typical day is 0.25-0.39
     assert fit.params.rho < 0
 
 
@@ -155,9 +168,10 @@ def test_rough_bergomi_recovers_a_rough_market():
     chain = synthetic_chain(dict.fromkeys((3, 7, 14, 30, 60), vols))
     fit = calibration.fit_rough_bergomi(chain, n_paths=16_000)  # different random numbers from the market's
     assert fit.n_expiries == 5
-    assert fit.rmse < 0.003
-    assert fit.params.H == pytest.approx(0.12, abs=0.06)
-    assert fit.params.rho == pytest.approx(-0.6, abs=0.15)
+    assert fit.rmse < 0.001
+    assert fit.params.H == pytest.approx(0.12, abs=0.02)  # 0.125 with these random numbers
+    assert fit.params.eta == pytest.approx(1.8, rel=0.1)
+    assert fit.params.rho == pytest.approx(-0.6, abs=0.05)
     np.testing.assert_allclose(np.sqrt(fit.xi.values), 0.15, rtol=0.1)
     assert (fit.expiries["skew_rough"] < 0).all() and (fit.expiries["skew_market"] < 0).all()
 
