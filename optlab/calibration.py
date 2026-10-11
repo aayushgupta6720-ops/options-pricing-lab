@@ -242,6 +242,59 @@ def fit_heston(
     return HestonFit(params, rmse, len(fitted), len(expiries), float(best.cost))
 
 
+def fit_heston_term(
+    chain: pd.DataFrame,
+    start: HestonParams,
+    min_days: float = HESTON_MIN_DAYS,
+    max_days: float = HESTON_MAX_DAYS,
+) -> HestonFit | None:
+    """Heston with one long-run variance per fitted expiry (theta steps at each), as many level
+    parameters as rough Bergomi's forward-variance curve has, so the two compare on smile shape with
+    the term structure of levels free in both. Started from `start`, a constant-theta fit to the same
+    window, with every step at its theta, so it can only match or improve on it."""
+    expiries = _price_inputs(chain, min_days, max_days)
+    if len(expiries) < 2:
+        return None
+    times = np.array(sorted(e.T for e in expiries))
+    lo, hi = HESTON_BOUNDS  # v0, kappa, theta, xi, rho
+    keep = [0, 1, 3, 4]  # all but theta, which becomes one per step
+    lower = np.concatenate([lo[keep], np.full(len(times), LOG_XI_BOUNDS[0])])
+    upper = np.concatenate([hi[keep], np.full(len(times), LOG_XI_BOUNDS[1])])
+
+    def unpack(x):
+        return heston.HestonTermParams.build(x[0], x[1], x[2], x[3], times, np.exp(x[4:]))
+
+    def residuals(x):
+        p = unpack(x)
+        return np.concatenate(
+            [(heston.price(e.F, e.K, e.T, e.r, p, e.kind) - e.price) * e.scale for e in expiries]
+        )
+
+    x0 = np.concatenate([start.as_array()[keep], np.full(len(times), np.log(max(start.theta, 1.01e-4)))])
+    x0 = np.clip(x0, lower + 1e-6 * (upper - lower), upper - 1e-6 * (upper - lower))
+    try:
+        best = least_squares(
+            residuals,
+            x0,
+            bounds=(lower, upper),
+            method="trf",
+            diff_step=1e-6,
+            xtol=1e-8,
+            ftol=1e-10,
+            max_nfev=300,
+        )
+    except (ValueError, FloatingPointError):
+        return None
+    if not np.isfinite(best.cost):
+        return None
+    params = unpack(best.x)
+    fitted = pd.concat([q for _, q in _usable_expiries(chain, min_days, max_days)])
+    errors = heston_vols(fitted, params) - fitted["iv"].to_numpy()
+    return HestonFit(
+        params, float(np.sqrt(np.nanmean(errors**2))), len(fitted), len(expiries), float(best.cost)
+    )
+
+
 def heston_vols(chain: pd.DataFrame, params: HestonParams) -> np.ndarray:
     """The Heston model's Black-76 implied vol for every quote in the chain."""
     out = np.full(len(chain), np.nan)

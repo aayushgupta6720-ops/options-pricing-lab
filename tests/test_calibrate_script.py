@@ -1,6 +1,7 @@
 from datetime import date
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from optlab.market import nse, store
@@ -81,7 +82,38 @@ def test_rough_bergomi_tables(dataset):
 
     quotes = store.read_table(dataset, store.ROUGH_QUOTES)
     assert len(quotes) == fits["n_quotes"].sum()
-    assert quotes[["rough_iv", "heston_iv"]].notna().mean().min() > 0.95
+    assert quotes[["rough_iv", "heston_iv", "heston_tt_iv"]].notna().mean().min() > 0.95
+
+    # Heston theta(t) starts from the one-theta fit, so it can only match or beat it on the same quotes,
+    # and it has one long-run variance per fitted expiry.
+    assert (fits["heston_tt_rmse"] <= fits["heston_rmse"] + 1e-6).all()
+    assert (fits["heston_tt_times"].map(len) == fits["n_expiries"]).all()
+    assert expiries[["heston_tt_rmse", "heston_tt_shape"]].notna().all().all()
+
+
+def test_backfill_adds_theta_t_to_fits_made_without_it(dataset):
+    from scripts import backfill_heston_term
+
+    assert calibrate.main(["--data-dir", str(dataset), "--models", "rough"]) == 0
+    tables = {
+        t: store.read_table(dataset, t) for t in (store.ROUGH_FITS, store.ROUGH_EXPIRIES, store.ROUGH_QUOTES)
+    }
+    added = ("heston_tt_rmse", "heston_tt_shape_rmse", "heston_tt_v0", "heston_tt_kappa", "heston_tt_xi",
+             "heston_tt_rho", "heston_tt_times", "heston_tt_thetas", "heston_tt_shape", "heston_tt_iv")  # fmt: skip
+    for table, rows in tables.items():  # as the tables were before theta(t)
+        store.replace_days(dataset, table, rows.drop(columns=[c for c in added if c in rows]),
+                           set(zip(rows["trade_date"], rows["underlying"], strict=True)))  # fmt: skip
+    assert backfill_heston_term.main(["--data-dir", str(dataset)]) == 0
+    for table, before in tables.items():
+        after = store.read_table(dataset, table)
+        assert len(after) == len(before)
+        for column in [c for c in added if c in before]:
+            got, want = after[column].tolist(), before[column].tolist()
+            if column.endswith(("times", "thetas")):
+                assert all(np.allclose(g, w, rtol=1e-6) for g, w in zip(got, want, strict=True)), column
+            else:
+                np.testing.assert_allclose(got, want, rtol=1e-6, err_msg=column)
+    assert backfill_heston_term.main(["--data-dir", str(dataset)]) == 0  # nothing left to do
 
 
 def test_unknown_model_is_an_error(dataset):

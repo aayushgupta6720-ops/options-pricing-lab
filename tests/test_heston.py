@@ -90,3 +90,59 @@ def test_feller_ratio_and_validation():
         HestonParams(0.04, 2.0, 0.04, 0.5, -1.0)
     with pytest.raises(ValueError):
         heston.price(100.0, 100.0, 1.0, 0.0, NIFTYISH, "CE")
+
+
+# --- a long-run variance that steps ------------------------------------------------------
+
+STEPPED = heston.HestonTermParams.build(
+    0.02, 3.0, 0.8, -0.7, times=(0.05, 0.2, 0.5), thetas=(0.06, 0.02, 0.04)
+)
+
+
+def test_equal_steps_price_like_constant_theta():
+    same = heston.HestonTermParams.build(0.02, 3.0, 0.8, -0.7, times=(0.05, 0.2), thetas=(0.03, 0.03))
+    K = np.linspace(18000, 27000, 9)
+    for T in (0.02, 0.1, 1.0):
+        np.testing.assert_allclose(
+            heston.price(22500.0, K, T, 0.05, same), heston.price(22500.0, K, T, 0.05, NIFTYISH), rtol=1e-10
+        )
+
+
+def test_stepped_theta_is_a_martingale_and_only_steps_before_expiry_matter():
+    for T in (0.03, 0.3, 2.0):
+        assert heston.char_fn(-1j, T, STEPPED) == pytest.approx(1.0)
+    # Steps after the expiry can't affect it.
+    changed_later = heston.HestonTermParams.build(
+        0.02, 3.0, 0.8, -0.7, times=(0.05, 0.2, 0.5), thetas=(0.06, 0.02, 0.5)
+    )
+    np.testing.assert_allclose(
+        heston.price(100.0, [90.0, 100.0], 0.15, 0.0, STEPPED),
+        heston.price(100.0, [90.0, 100.0], 0.15, 0.0, changed_later),
+        rtol=1e-12,
+    )
+
+
+def test_stepped_theta_monte_carlo_agrees_with_the_formula():
+    T = 0.4
+    terminal = heston.simulate(100.0, T, 0.0, 0.0, STEPPED, n_paths=100_000, n_steps=200, rng=3)
+    for K in (85.0, 100.0, 115.0):
+        payoff = np.maximum(terminal - K, 0.0)
+        estimate, error = payoff.mean(), payoff.std(ddof=1) / np.sqrt(payoff.size)
+        exact = heston.price(100.0, K, T, 0.0, STEPPED)
+        assert abs(estimate - exact) < 3 * error + 0.01, K
+
+
+def test_theta_at_and_step_validation():
+    assert [STEPPED.theta_at(t) for t in (0.0, 0.05, 0.1, 0.2, 0.3, 5.0)] == [
+        0.06,
+        0.06,
+        0.02,
+        0.02,
+        0.04,
+        0.04,
+    ]
+    assert STEPPED.theta == 0.04 and STEPPED.as_array().shape == (5,)
+    with pytest.raises(ValueError):
+        heston.HestonTermParams.build(0.02, 3.0, 0.8, -0.7, times=(0.2, 0.1), thetas=(0.02, 0.03))
+    with pytest.raises(ValueError):
+        heston.HestonTermParams.build(0.02, 3.0, 0.8, -0.7, times=(0.1,), thetas=(0.02, 0.03))

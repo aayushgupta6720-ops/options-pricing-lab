@@ -36,20 +36,29 @@ k[2].metric(
     f"{fit['rho']:+.2f}".replace("-", "−"),
     help="ρ. Negative: vol rises when the market falls.",
 )
+
+
+def pts(value) -> str:
+    return "–" if pd.isna(value) else f"{100 * value:.2f}"
+
+
 k = st.columns(3)
 k[0].metric(
     "Rough Bergomi error",
-    f"{100 * fit['rmse']:.2f} vol pts",
+    f"{pts(fit['rmse'])} vol pts",
     help="Root-mean-square gap between the model's implied vols and the market's, over all fitted quotes.",
 )
 k[1].metric(
-    "Heston error", f"{100 * fit['heston_rmse']:.2f} vol pts", help="Heston fitted to the same quotes."
+    "Heston error: one θ / θ(t)",
+    f"{pts(fit['heston_rmse'])} / {pts(fit.get('heston_tt_rmse'))} vol pts",
+    help="Heston fitted to the same quotes, first with one long-run variance θ, then with one per expiry, "
+    "θ(t). With θ(t) Heston has as many level parameters as rough Bergomi's forward-variance curve, plus one.",
 )
 k[2].metric(
-    "Shape error: rough / Heston",
-    f"{100 * fit['shape_rmse']:.2f} / {100 * fit['heston_shape_rmse']:.2f} vol pts",
+    "Shape error: rough / Heston θ(t)",
+    f"{pts(fit['shape_rmse'])} / {pts(fit.get('heston_tt_shape_rmse'))} vol pts",
     help="RMSE after removing each expiry's average miss: how well each model gets the smile's shape, setting "
-    "aside its level (rough Bergomi fits one forward-variance level per expiry; Heston can't).",
+    "aside its level. Against Heston θ(t), both models can match each expiry's level, so this is the fair test.",
 )
 
 # --- Skew against maturity, log-log ---------------------------------------------------------
@@ -100,6 +109,8 @@ if not quotes.empty:
     )
     q = quotes[quotes["expiry"] == expiry].sort_values("strike")
     curves = {"Rough Bergomi": (q["strike"], q["rough_iv"]), "Heston": (q["strike"], q["heston_iv"])}
+    if "heston_tt_iv" in q and q["heston_tt_iv"].notna().any():
+        curves["Heston θ(t)"] = (q["strike"], q["heston_tt_iv"])
     smile = charts.model_smile(q, curves, pal)
     st.plotly_chart(smile, width="stretch")
 
@@ -108,9 +119,11 @@ st.subheader("Which model gets the shape right, by maturity")
 buckets = pd.cut(
     expiries["T"] * 365, [0, 7, 14, 30, 91], labels=["under a week", "1–2 weeks", "2–4 weeks", "1–3 months"]
 )
-by_bucket = expiries.groupby(buckets, observed=True)[["rough_shape", "heston_shape"]].median()
+shape_columns = {"Rough Bergomi": "rough_shape", "Heston": "heston_shape", "Heston θ(t)": "heston_tt_shape"}
+shape_columns = {name: c for name, c in shape_columns.items() if c in expiries and expiries[c].notna().any()}
+by_bucket = expiries.groupby(buckets, observed=True)[list(shape_columns.values())].median()
 bars = go.Figure()
-for name, column in (("Rough Bergomi", "rough_shape"), ("Heston", "heston_shape")):
+for name, column in shape_columns.items():
     bars.add_trace(
         go.Bar(
             x=list(by_bucket.index.astype(str)),
@@ -126,7 +139,8 @@ bars.update_xaxes(title_text="Expiry")
 st.plotly_chart(theme.style(bars, pal, 340), width="stretch")
 st.caption(
     f"Median over {fits['trade_date'].nunique()} trading days of each expiry's shape error: its misses after "
-    "removing their average, in vol points. Lower is better."
+    "removing their average, in vol points. Lower is better. Heston θ(t) can match every expiry's level, as rough "
+    "Bergomi can, yet improves Heston's shape only a little: what's left is the smile's shape itself."
 )
 
 st.subheader("Fitted roughness over time")
@@ -168,9 +182,12 @@ with c1:
     fig.add_vline(x=pd.Timestamp(day), line=dict(color=pal.muted, width=1))
     st.plotly_chart(fig, width="stretch")
 with c2:
+    errors = {"Rough Bergomi": history["rmse"], "Heston": history["heston_rmse"]}
+    if "heston_tt_rmse" in history and history["heston_tt_rmse"].notna().any():
+        errors["Heston θ(t)"] = history["heston_tt_rmse"]
     fig = charts.lines(
-        hx, {"Rough Bergomi": history["rmse"], "Heston": history["heston_rmse"]}, pal, y_title="Fit error (vol)",
-        percent_y=True, height=300, slots=[charts.MODEL_SLOTS["Rough Bergomi"], charts.MODEL_SLOTS["Heston"]],
+        hx, errors, pal, y_title="Fit error (vol)", percent_y=True, height=300,
+        slots=[charts.MODEL_SLOTS[name] for name in errors],
     )  # fmt: skip
     fig.add_vline(x=pd.Timestamp(day), line=dict(color=pal.muted, width=1))
     st.plotly_chart(fig, width="stretch")
@@ -189,7 +206,10 @@ with st.expander("How this is computed"):
 - It has no pricing formula, so it's priced by Monte Carlo: the hybrid scheme, {ROUGH_PATHS:,} paths, four
   time steps a day, and the same random numbers every day so day-to-day changes aren't noise.
 - The fit finds H, η, ρ and one forward-variance level per expiry, for quotes between the {MIN_ABS_DELTA:.0%}-delta
-  put and call. Heston is refitted to exactly the same quotes, so the errors compare like with like.
+  put and call. Heston is refitted to exactly the same quotes, so the errors compare like with like: once with
+  one long-run variance θ, and once with θ stepping at each expiry, θ(t), which gives it a level per expiry too.
+  θ(t) keeps Heston's pricing formula: the long-run variance only enters the characteristic function's C
+  term, which becomes a sum over the steps.
 - Skew is the slope of implied vol against log-strike at the money: a central difference over ±¼ standard
   deviation, for the market (via its SABR fit) and for both models.
 - The fits run in the daily data job; this page only reads them.

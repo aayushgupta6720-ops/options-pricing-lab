@@ -278,6 +278,8 @@ def test_heston_page_presets_and_monte_carlo():
 def test_rough_page_shows_the_fit_and_the_skew_term_structure():
     app = open_page(MODELS, "Rough volatility")
     assert 0.01 <= float(metrics(app)["Roughness H"]) <= 0.5
+    one_theta, theta_t = (float(v) for v in metrics(app)["Heston error: one θ / θ(t)"].split()[0:3:2])
+    assert 0 < theta_t <= one_theta + 0.01  # theta(t) starts from the one-theta fit
     skew = json.loads(app.get("plotly_chart")[0].proto.spec)
     assert [t["name"] for t in skew["data"]] == ["Market (SABR)", "Rough Bergomi", "Heston"]
     assert skew["layout"]["xaxis"]["type"] == "log" and skew["layout"]["yaxis"]["type"] == "log"

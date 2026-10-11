@@ -14,6 +14,11 @@ Heston's characteristic function decays like a Gaussian for short maturities and
 exponentially for long ones) and done with 512-point Gauss-Legendre, once per maturity for all
 strikes at once. Puts follow from put-call parity.
 
+`HestonTermParams` lets the long-run variance theta step between given times (one level per
+expiry, say), with kappa, xi and rho constant. The characteristic function stays in closed form:
+D doesn't involve theta, and C = kappa * Int_0^T theta(s) D(T - s) ds, which for steps is a sum of
+I(T - a) - I(T - b) over them, I(tau) being Int_0^tau D, i.e. constant-theta Heston's C / (kappa theta).
+
 `simulate` is a full-truncation Euler Monte Carlo (Lord, Koekkoek and van Dijk, 2010), used to
 check the pricer and to show it converging.
 """
@@ -47,6 +52,34 @@ class HestonParams:
     def as_array(self) -> np.ndarray:
         return np.array([self.v0, self.kappa, self.theta, self.xi, self.rho])
 
+    def theta_at(self, t: float) -> float:
+        """The long-run variance in force at time t."""
+        return self.theta
+
+
+@dataclass(frozen=True)
+class HestonTermParams(HestonParams):
+    """Heston whose long-run variance steps: thetas[i] holds on (times[i-1], times[i]], from time 0
+    for the first, and the last one goes on after times[-1]. `theta` is that last one."""
+
+    times: tuple[float, ...]
+    thetas: tuple[float, ...]
+
+    @classmethod
+    def build(cls, v0, kappa, xi, rho, times, thetas) -> "HestonTermParams":
+        times, thetas = tuple(float(t) for t in times), tuple(float(t) for t in thetas)
+        return cls(v0, kappa, thetas[-1] if thetas else 0.0, xi, rho, times, thetas)
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.times or len(self.times) != len(self.thetas) or min(self.thetas) < 0:
+            raise ValueError(f"need one non-negative theta per step time: {self}")
+        if self.times[0] <= 0 or np.any(np.diff(self.times) <= 0):
+            raise ValueError(f"step times must be positive and increasing: {self.times}")
+
+    def theta_at(self, t: float) -> float:
+        return self.thetas[min(int(np.searchsorted(self.times, t, side="left")), len(self.thetas) - 1)]
+
 
 def char_fn(u, T: float, p: HestonParams) -> np.ndarray:
     """E[exp(i u ln(S_T / F))] for complex u, in the little-trap form."""
@@ -55,8 +88,22 @@ def char_fn(u, T: float, p: HestonParams) -> np.ndarray:
     beta = p.kappa - p.rho * p.xi * iu
     d = np.sqrt(beta**2 + p.xi**2 * (iu + u**2))
     g = (beta - d) / (beta + d)
+
+    def integrated_D(tau):  # Int_0^tau D
+        return ((beta - d) * tau - 2.0 * np.log((1.0 - g * np.exp(-d * tau)) / (1.0 - g))) / p.xi**2
+
+    if isinstance(p, HestonTermParams):
+        starts = (0.0, *p.times[:-1])
+        ends = (*p.times[:-1], np.inf)
+        C = sum(
+            theta * (integrated_D(T - a) - integrated_D(T - min(b, T)))
+            for a, b, theta in zip(starts, ends, p.thetas, strict=True)
+            if a < T
+        )
+        C = p.kappa * C
+    else:
+        C = p.kappa * p.theta * integrated_D(T)
     e = np.exp(-d * T)
-    C = p.kappa * p.theta / p.xi**2 * ((beta - d) * T - 2.0 * np.log((1.0 - g * e) / (1.0 - g)))
     D = (beta - d) / p.xi**2 * (1.0 - e) / (1.0 - g * e)
     return np.exp(C + D * p.v0)
 
@@ -118,13 +165,13 @@ def simulate(S, T, r, q, p: HestonParams, n_paths=50_000, n_steps=100, rng=None)
     log_s = np.full(n_paths, np.log(S))
     v = np.full(n_paths, p.v0)
     tilt = np.sqrt(1.0 - p.rho**2)
-    for _ in range(n_steps):
+    for step in range(n_steps):
         z1 = rng.standard_normal(n_paths)
         z2 = p.rho * z1 + tilt * rng.standard_normal(n_paths)
         positive = np.maximum(v, 0.0)
         root = np.sqrt(positive * dt)
         log_s += (r - q - 0.5 * positive) * dt + root * z1
-        v += p.kappa * (p.theta - positive) * dt + p.xi * root * z2
+        v += p.kappa * (p.theta_at((step + 0.5) * dt) - positive) * dt + p.xi * root * z2
     return np.exp(log_s)
 
 
@@ -142,13 +189,13 @@ def simulate_paths(S, T, r, q, p: HestonParams, n_paths, n_fixings, substeps=4, 
     x, v = log_s[:, 0].copy(), np.full(n_paths, p.v0)
     tilt = np.sqrt(1.0 - p.rho**2)
     for i in range(n_fixings):
-        for _ in range(substeps):
+        for j in range(substeps):
             z1 = rng.standard_normal(n_paths)
             z2 = p.rho * z1 + tilt * rng.standard_normal(n_paths)
             positive = np.maximum(v, 0.0)
             root = np.sqrt(positive * dt)
             x += (r - q - 0.5 * positive) * dt + root * z1
-            v += p.kappa * (p.theta - positive) * dt + p.xi * root * z2
+            v += p.kappa * (p.theta_at((i * substeps + j + 0.5) * dt) - positive) * dt + p.xi * root * z2
             integrated[:, i] += positive * dt
         log_s[:, i + 1] = x
     return log_s, integrated

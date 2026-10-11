@@ -7,7 +7,9 @@
 Models:
     heston  Heston per day and SABR per day and expiry, every underlying
     rough   rough Bergomi per day (config.ROUGH_UNDERLYINGS), with Heston refitted to the same
-            2-91 day window for a like-for-like comparison, per-expiry skews and per-quote vols
+            2-91 day window for a like-for-like comparison, and Heston again with one long-run
+            variance per expiry (theta(t)), as many level parameters as rough Bergomi's
+            forward-variance curve has; per-expiry skews and per-quote vols
 
 Days already fitted are skipped unless --force. Days are fitted in date order within runs, each fit
 warm-started from the previous day's (fixed starting points are tried too, and the best fit wins,
@@ -28,6 +30,7 @@ import pandas as pd
 from optlab import calibration, config
 from optlab.calibration import (
     fit_heston,
+    fit_heston_term,
     fit_rough_bergomi,
     fit_sabr_chain,
     heston_skew,
@@ -78,14 +81,49 @@ def sabr_rows(day: date, underlying: str, fits) -> list[dict]:
     ]
 
 
-def rough_rows(day: date, underlying: str, fit, heston) -> tuple[dict, list[dict], list[dict]]:
+def per_expiry(miss: pd.Series, expiries: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """Each expiry's RMSE and shape error (the spread of its misses around their mean)."""
+    groups = miss.groupby(expiries.to_numpy())
+    return groups.apply(lambda m: np.sqrt(np.nanmean(m**2))), groups.apply(lambda m: np.nanstd(m))
+
+
+def term_columns(quotes: pd.DataFrame, heston_tt) -> tuple[dict, pd.DataFrame, np.ndarray]:
+    """Heston theta(t)'s columns for one day's rough Bergomi quotes: the day's errors and
+    parameters, each expiry's errors (indexed by expiry), and each quote's implied vol."""
+    if heston_tt is None:
+        return (
+            {"heston_tt_rmse": np.nan, "heston_tt_shape_rmse": np.nan},
+            pd.DataFrame(),
+            np.full(len(quotes), np.nan),
+        )
+    vols = heston_vols(quotes, heston_tt.params)
+    miss = pd.Series(vols - quotes["iv"].to_numpy(), index=quotes.index)
+    p = heston_tt.params
+    row = {
+        "heston_tt_rmse": float(np.sqrt(np.nanmean(miss**2))),
+        "heston_tt_shape_rmse": shape_rmse(miss, quotes["expiry"]),
+        "heston_tt_v0": p.v0,
+        "heston_tt_kappa": p.kappa,
+        "heston_tt_xi": p.xi,
+        "heston_tt_rho": p.rho,
+        "heston_tt_times": list(p.times),
+        "heston_tt_thetas": list(p.thetas),
+    }
+    rmse, shape = per_expiry(miss, quotes["expiry"])
+    return row, pd.DataFrame({"heston_tt_rmse": rmse, "heston_tt_shape": shape}), vols
+
+
+def rough_rows(
+    day: date, underlying: str, fit, heston, heston_tt=None
+) -> tuple[dict, list[dict], list[dict]]:
     """The day's row, per-expiry rows and per-quote rows for a rough Bergomi fit, with the
-    same-window Heston fit alongside."""
+    same-window Heston fits alongside: constant theta, and theta(t)."""
     row = {"trade_date": day, "underlying": underlying, "fitted": fit is not None}
     if fit is None:
         return row, [], []
     quotes = fit.quotes.copy()
     quotes["heston_iv"] = heston_vols(quotes, heston.params) if heston else np.nan
+    tt_row, tt_expiries, quotes["heston_tt_iv"] = term_columns(quotes, heston_tt)
     rough_miss, heston_miss = quotes["model_iv"] - quotes["iv"], quotes["heston_iv"] - quotes["iv"]
     p = fit.params
     row.update(
@@ -101,14 +139,10 @@ def rough_rows(day: date, underlying: str, fit, heston) -> tuple[dict, list[dict
         cost=fit.cost,
         xi_times=list(map(float, fit.xi.times)),
         xi_values=list(map(float, fit.xi.values)),
+        **tt_row,
     )
-
-    def per_expiry(miss):
-        groups = miss.groupby(quotes["expiry"].to_numpy())
-        return groups.apply(lambda m: np.sqrt(np.nanmean(m**2))), groups.apply(lambda m: np.nanstd(m))
-
-    rough_rmse, rough_shape = per_expiry(rough_miss)
-    heston_rmse, heston_shape = per_expiry(heston_miss)
+    rough_rmse, rough_shape = per_expiry(rough_miss, quotes["expiry"])
+    heston_rmse, heston_shape = per_expiry(heston_miss, quotes["expiry"])
     counts = quotes.groupby("expiry").size()
     expiries = []
     for e in fit.expiries.itertuples():
@@ -129,6 +163,12 @@ def rough_rows(day: date, underlying: str, fit, heston) -> tuple[dict, list[dict
                 "rough_shape": rough_shape[e.expiry],
                 "heston_rmse": heston_rmse[e.expiry],
                 "heston_shape": heston_shape[e.expiry],
+                "heston_tt_rmse": tt_expiries["heston_tt_rmse"].get(e.expiry, np.nan)
+                if len(tt_expiries)
+                else np.nan,
+                "heston_tt_shape": tt_expiries["heston_tt_shape"].get(e.expiry, np.nan)
+                if len(tt_expiries)
+                else np.nan,
             }
         )
     quote_rows = quotes.assign(trade_date=day, underlying=underlying).rename(columns={"model_iv": "rough_iv"})
@@ -142,6 +182,7 @@ def rough_rows(day: date, underlying: str, fit, heston) -> tuple[dict, list[dict
         "iv",
         "rough_iv",
         "heston_iv",
+        "heston_tt_iv",
     ]
     return row, expiries, quote_rows[columns].to_dict("records")
 
@@ -187,6 +228,13 @@ def heston_run(job) -> tuple[dict, list[str]]:
     return {store.HESTON_FITS: heston, store.SABR_FITS: sabr}, failures
 
 
+def same_window_heston(chain: pd.DataFrame):
+    """Heston fitted to rough Bergomi's window, with constant theta and then with theta(t)."""
+    window = dict(min_days=calibration.ROUGH_MIN_DAYS, max_days=calibration.ROUGH_MAX_DAYS)
+    heston = fit_heston(chain, **window)
+    return heston, (fit_heston_term(chain, heston.params, **window) if heston else None)
+
+
 def rough_run(job) -> tuple[dict, list[str]]:
     """Rough Bergomi (and same-window Heston) for a run of consecutive days. Runs in a worker."""
     root, underlying, days, previous_row = job
@@ -202,12 +250,8 @@ def rough_run(job) -> tuple[dict, list[str]]:
         chain = chain_for(day)
         try:
             fit = fit_rough_bergomi(chain, previous, n_paths=calibration.ROUGH_PATHS) if len(chain) else None
-            heston = (
-                fit_heston(chain, min_days=calibration.ROUGH_MIN_DAYS, max_days=calibration.ROUGH_MAX_DAYS)
-                if fit
-                else None
-            )
-            row, expiry_rows, quote_rows = rough_rows(day, underlying, fit, heston)
+            heston, heston_tt = same_window_heston(chain) if fit else (None, None)
+            row, expiry_rows, quote_rows = rough_rows(day, underlying, fit, heston, heston_tt)
         except Exception as error:
             failures.append(f"{underlying} {day} (rough): {type(error).__name__}: {error}")
             continue
