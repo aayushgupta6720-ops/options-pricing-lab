@@ -5,13 +5,23 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from optlab.calibration import MIN_ABS_DELTA, ROUGH_MAX_DAYS, ROUGH_MIN_DAYS, ROUGH_PATHS
+from optlab.calibration import (
+    FINE_DAYS,
+    FINE_STEPS,
+    MIN_ABS_DELTA,
+    ROUGH_MAX_DAYS,
+    ROUGH_MIN_DAYS,
+    ROUGH_PATHS,
+    ROUGH_SEEDS,
+)
+from optlab.market.calendar import SESSIONS_PER_YEAR
 from ui import charts, data, theme
 
 st.caption(
     "In a rough volatility model (rough Bergomi) the at-the-money skew keeps steepening as expiries get shorter; in "
     f"Heston it levels off. Both are fitted to NIFTY's expiries {ROUGH_MIN_DAYS} to {ROUGH_MAX_DAYS} days out to see "
-    "which matches the market. Roughness H runs from 0.5 (a classical model) down towards 0 (very rough)."
+    "which matches the market, with time counted in trading days, so a weekend isn't two days of variance. "
+    "Roughness H runs from 0.5 (a classical model) down towards 0 (very rough)."
 )
 
 fits = data.load_or_stop(data.rough_fits, "NIFTY")
@@ -26,9 +36,14 @@ fit = fits.set_index("trade_date").loc[day]
 today = expiries[expiries["trade_date"] == day].sort_values("T")
 pal = theme.current()
 
+seed_h = list(fit["H_seeds"]) if "H_seeds" in fit and isinstance(fit["H_seeds"], (list, np.ndarray)) else []
 k = st.columns(3)
 k[0].metric(
-    "Roughness H", f"{fit['H']:.2f}", help="Hurst exponent: 0.5 is a classical diffusion, lower is rougher."
+    "Roughness H",
+    f"{fit['H']:.2f}",
+    help="Hurst exponent: 0.5 is a classical diffusion, lower is rougher. The median of the day's fits with "
+    f"{len(ROUGH_SEEDS)} sets of random numbers"
+    + (f"; they range from {min(seed_h):.2f} to {max(seed_h):.2f}." if len(seed_h) > 1 else "."),
 )
 k[1].metric("Vol of vol", f"{fit['eta']:.2f}", help="η: how strongly volatility itself moves.")
 k[2].metric(
@@ -64,7 +79,7 @@ k[2].metric(
 # --- Skew against maturity, log-log ---------------------------------------------------------
 st.subheader("At-the-money skew against maturity")
 fig = go.Figure()
-x = today["T"] * 365
+x = today["T"] * SESSIONS_PER_YEAR
 series = [("Market (SABR)", "skew_market", "markers"), ("Rough Bergomi", "skew_rough", "lines+markers"),
           ("Heston", "skew_heston", "lines+markers")]  # fmt: skip
 for name, column, mode in series:
@@ -77,14 +92,14 @@ for name, column, mode in series:
             mode=mode,
             line=dict(color=pal.series[i], width=charts.LINE),
             marker=dict(size=charts.MARKER + (2 if i == 0 else 0), color=pal.series[i]),
-            hovertemplate=f"%{{x:.0f}} days<br>|skew| %{{y:.3f}}<extra>{name}</extra>",
+            hovertemplate=f"%{{x:.0f}} trading days<br>|skew| %{{y:.3f}}<extra>{name}</extra>",
         )
     )
 market = today.dropna(subset=["skew_market"])
 charts.log_ticks(
-    fig, "x", [d for d in (2, 3, 5, 7, 10, 14, 21, 30, 45, 60, 90) if x.min() * 0.8 <= d <= x.max() * 1.25]
+    fig, "x", [d for d in (1, 2, 3, 5, 7, 10, 15, 21, 30, 42, 63) if x.min() * 0.8 <= d <= x.max() * 1.25]
 )
-fig.update_xaxes(title_text="Days to expiry")
+fig.update_xaxes(title_text="Trading days to expiry")
 fig.update_yaxes(type="log", title_text="At-the-money skew (absolute)")
 st.plotly_chart(theme.style(fig, pal, 380), width="stretch")
 slope_note = ""
@@ -117,7 +132,9 @@ if not quotes.empty:
 # --- Across the whole history ---------------------------------------------------------------
 st.subheader("Which model gets the shape right, by maturity")
 buckets = pd.cut(
-    expiries["T"] * 365, [0, 7, 14, 30, 91], labels=["under a week", "1–2 weeks", "2–4 weeks", "1–3 months"]
+    expiries["T"] * SESSIONS_PER_YEAR,
+    [0, 5, 10, 21, 63],
+    labels=["under a week", "1–2 weeks", "2–4 weeks", "1–3 months"],
 )
 shape_columns = {"Rough Bergomi": "rough_shape", "Heston": "heston_shape", "Heston θ(t)": "heston_tt_shape"}
 shape_columns = {name: c for name, c in shape_columns.items() if c in expiries and expiries[c].notna().any()}
@@ -179,6 +196,20 @@ with c1:
         height=300,
         slots=[charts.MODEL_SLOTS["Market"], charts.MODEL_SLOTS["Rough Bergomi"]],
     )
+    if "H_seeds" in history:
+        seeds = history["H_seeds"].map(
+            lambda v: list(v) if isinstance(v, (list, np.ndarray)) and len(v) else None
+        )
+        has = seeds.notna()
+        if has.any():
+            colour = pal.series[charts.MODEL_SLOTS["Rough Bergomi"]]
+            band = dict(mode="lines", line=dict(width=0), hoverinfo="skip", showlegend=False)
+            fig.add_trace(go.Scatter(x=hx[has], y=seeds[has].map(max), **band))
+            fig.add_trace(
+                go.Scatter(
+                    x=hx[has], y=seeds[has].map(min), fill="tonexty", fillcolor=colour, opacity=0.2, **band
+                )
+            )
     fig.add_vline(x=pd.Timestamp(day), line=dict(color=pal.muted, width=1))
     st.plotly_chart(fig, width="stretch")
 with c2:
@@ -193,8 +224,9 @@ with c2:
     st.plotly_chart(fig, width="stretch")
 
 st.caption(
-    "One day's fitted H is noisy, because H, vol of vol and the variance levels can trade off against each other. "
-    "The level it hovers around is the steadier reading."
+    f"The shaded band is the range of H over the day's {len(ROUGH_SEEDS)} fits with different random numbers. "
+    "The quotes barely pin H down: H, vol of vol and the variance levels trade off against each other, so the "
+    "Monte Carlo noise moves it. The level it hovers around is the steadier reading."
 )
 
 with st.expander("How this is computed"):
@@ -204,7 +236,13 @@ with st.expander("How this is computed"):
   Brownian motion: roughness H, vol of vol η, spot-vol correlation ρ. It predicts an at-the-money skew
   that grows like T^(H − ½) as maturity T shrinks; Heston's flattens out instead.
 - It has no pricing formula, so it's priced by Monte Carlo: the hybrid scheme, {ROUGH_PATHS:,} paths, four
-  time steps a day, and the same random numbers every day so day-to-day changes aren't noise.
+  time steps a trading day ({FINE_STEPS} for expiries within {FINE_DAYS} trading days, where four
+  understated a 2-day skew by about a tenth), and the same random numbers every day so day-to-day changes
+  aren't noise. Each day is fitted {len(ROUGH_SEEDS)} times with different random numbers; the day's fit
+  is the median-H one.
+- Time is counted in trading days ({SESSIONS_PER_YEAR} a year), each expiry's implied vol rescaled to keep
+  its total variance. In calendar days a Friday's week-out expiry spans a weekend that carries almost no
+  variance: NIFTY's 7-day vol averaged 0.950 of its 30-day vol on Fridays and 1.025 on Mondays.
 - The fit finds H, η, ρ and one forward-variance level per expiry, for quotes between the {MIN_ABS_DELTA:.0%}-delta
   put and call. Heston is refitted to exactly the same quotes, so the errors compare like with like: once with
   one long-run variance θ, and once with θ stepping at each expiry, θ(t), which gives it a level per expiry too.

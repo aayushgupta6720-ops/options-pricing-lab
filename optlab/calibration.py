@@ -38,6 +38,7 @@ import pandas as pd
 from scipy.optimize import least_squares
 
 from optlab.implied_vol import implied_vol
+from optlab.market import calendar
 from optlab.models import black_scholes, heston, rough_bergomi, sabr
 from optlab.models.heston import HestonParams
 from optlab.models.sabr import SabrParams
@@ -313,6 +314,14 @@ ROUGH_MIN_DAYS = 2
 ROUGH_MAX_DAYS = 91
 ROUGH_PATHS = 20_000
 ROUGH_SEED = 2026  # the same random numbers for every fit, so fits are comparable day to day
+# Each day is fitted once per seed. With one seed, 8 Oct 2026's H came out 0.083, 0.059, 0.162 or
+# 0.037 depending on the seed alone, at the same fit error: the quotes barely pin H down, and the
+# Monte Carlo noise decides. The day's fit is the median-H one, reported with the others' range.
+ROUGH_SEEDS = (ROUGH_SEED, 1, 2)
+# Four steps a day understated a 2-day expiry's ATM skew by about 10% (5 days: 7%) against a 32-step
+# grid; expiries this close get FINE_STEPS a day on a second, short grid instead (2 days: 4%).
+FINE_DAYS = 10
+FINE_STEPS = 16
 ROUGH_BOUNDS = (np.array([0.01, 0.1, -0.99]), np.array([0.5, 5.0, 0.5]))  # H, eta, rho
 ROUGH_STARTS = ((0.1, 1.5, -0.7), (0.3, 1.0, -0.5))
 LOG_XI_BOUNDS = (np.log(1e-4), np.log(1.0))
@@ -348,12 +357,30 @@ def _atm_forward_variance(chain: pd.DataFrame, times: np.ndarray, min_days, max_
     return np.clip(steps, np.exp(LOG_XI_BOUNDS[0]) * 1.01, np.exp(LOG_XI_BOUNDS[1]) * 0.99)
 
 
+@dataclass(frozen=True)
+class RoughSimulation:
+    """Rough Bergomi paths on two grids: maturities up to `fine_upto` on the fine one."""
+
+    coarse: rough_bergomi.Paths
+    fine: rough_bergomi.Paths | None = None
+    fine_upto: float = 0.0
+
+    def at(self, T: float) -> rough_bergomi.Paths:
+        return self.fine if self.fine is not None and T <= self.fine_upto + 1e-12 else self.coarse
+
+
+def _sim_at(sim, T: float):
+    return sim.at(T) if isinstance(sim, RoughSimulation) else sim
+
+
 def fit_rough_bergomi(
     chain: pd.DataFrame,
     previous: rough_bergomi.RoughBergomiParams | None = None,
     n_paths: int = ROUGH_PATHS,
     min_days: float = ROUGH_MIN_DAYS,
     max_days: float = ROUGH_MAX_DAYS,
+    seed: int = ROUGH_SEED,
+    days_per_year: int = 365,
 ) -> RoughFit | None:
     """Fit rough Bergomi to one day's expiries from min_days to max_days.
 
@@ -361,24 +388,46 @@ def fit_rough_bergomi(
     between expiries (started from the ATM term structure). Variance swaps replicated from the quoted
     strikes would pin xi0 down without fitting, but they were too noisy expiry by expiry: the
     strip for a one-week expiry picks up the lottery-ticket wings, and a thinly quoted expiry's strip
-    stops short. Prices come from Monte Carlo with the same random numbers at every step of the
-    optimiser and on every day; residuals are the same vega-weighted price errors as Heston's.
+    stops short. Prices come from Monte Carlo with the same random numbers (from `seed`) at every
+    step of the optimiser and on every day; residuals are the same vega-weighted price errors as
+    Heston's. Expiries within FINE_DAYS days get a grid of FINE_STEPS a day.
+
+    `days_per_year` is the clock the chain's T is on: 365 for calendar days, 252 for a chain moved to
+    trading time (to_trading_time, which keeps the window in calendar days: pass min_days=0 and
+    max_days=inf for it).
     """
     expiries = sorted(_price_inputs(chain, min_days, max_days), key=lambda e: e.T)
     if len(expiries) < 2:
         return None
     times = np.array([e.T for e in expiries])
     log_xi0 = np.log(_atm_forward_variance(chain, times, min_days, max_days))
-    normals = rough_bergomi.draw(n_paths, times[-1], rng=ROUGH_SEED)
-    cache: dict = {}
+    grid = dict(days_per_year=days_per_year)
+    coarse = rough_bergomi.draw(n_paths, times[-1], rng=seed, **grid)
+    fine_upto = max((T for T in times if T * days_per_year <= FINE_DAYS), default=0.0)
+    fine = (
+        rough_bergomi.draw(n_paths, fine_upto, rng=[seed, 1], steps_per_day=FINE_STEPS, **grid)
+        if fine_upto
+        else None
+    )
+    caches: tuple[dict, dict] = ({}, {})
 
     def unpack(x):
         return rough_bergomi.RoughBergomiParams(*x[:3]), rough_bergomi.ForwardVariance(times, np.exp(x[3:]))
 
+    def simulate(params, xi, cache=True) -> RoughSimulation:
+        return RoughSimulation(
+            rough_bergomi.paths(coarse, params, xi, cache=caches[0] if cache else None),
+            rough_bergomi.paths(fine, params, xi, cache=caches[1] if cache else None) if fine else None,
+            fine_upto,
+        )
+
     def residuals(x):
-        sim = rough_bergomi.paths(normals, *unpack(x), cache=cache)
+        sim = simulate(*unpack(x))
         return np.concatenate(
-            [(rough_bergomi.price(e.F, e.K, e.T, e.r, sim, e.kind) - e.price) * e.scale for e in expiries]
+            [
+                (rough_bergomi.price(e.F, e.K, e.T, e.r, sim.at(e.T), e.kind) - e.price) * e.scale
+                for e in expiries
+            ]
         )
 
     lower = np.concatenate([ROUGH_BOUNDS[0], np.full(len(times), LOG_XI_BOUNDS[0])])
@@ -405,7 +454,7 @@ def fit_rough_bergomi(
         return None
     params, xi = unpack(best.x)
     fitted = pd.concat([q for _, q in _usable_expiries(chain, min_days, max_days)])
-    sim = rough_bergomi.paths(normals, params, xi)
+    sim = simulate(params, xi, cache=False)
     fitted = fitted.assign(model_iv=rough_vols(fitted, sim))
     misses = fitted["model_iv"] - fitted["iv"]
     rmse = float(np.sqrt(np.nanmean(misses**2)))
@@ -422,19 +471,37 @@ def fit_rough_bergomi(
     )
 
 
+def to_trading_time(chain: pd.DataFrame, sessions) -> pd.DataFrame:
+    """The chain on a trading-day clock: each expiry's T becomes its NSE sessions / 252 (see
+    market.calendar), with its implied vol and rate rescaled so the total variance (iv^2 T) and the
+    discount factor (rT) are unchanged, and so is every price. An expiry with no session left goes."""
+    if chain.empty:
+        return chain
+    day = chain["trade_date"].iloc[0]
+    n = {e: calendar.sessions_between(day, e, sessions) for e in chain["expiry"].unique()}
+    out = chain[chain["expiry"].map(n) > 0].copy()
+    T_trading = out["expiry"].map(n).to_numpy(dtype=float) / calendar.SESSIONS_PER_YEAR
+    stretch = out["T"].to_numpy() / T_trading
+    out["iv"] = out["iv"] * np.sqrt(stretch)
+    out["r"] = out["r"] * stretch
+    out["T"] = T_trading
+    return out
+
+
 def _expiry_skews(fitted: pd.DataFrame, sim) -> pd.DataFrame:
     """ATM level and skew per expiry: the market's from a SABR fit to its quotes, rough Bergomi's
     from the simulated paths (the same paths for both strikes, so the difference isn't noise)."""
     rows = []
     for expiry, q in fitted.groupby("expiry"):
         F, T, r = float(q["forward"].iloc[0]), float(q["T"].iloc[0]), float(q["r"].iloc[0])
+        paths = _sim_at(sim, T)
         level = atm_vol(q)
         level = level if np.isfinite(level) else float(q["iv"].median())
         smile = fit_sabr(q)
 
-        def rough_at(k, F=F, T=T, r=r):
+        def rough_at(k, F=F, T=T, r=r, paths=paths):
             K, kinds = F * np.exp(k), np.where(k < 0, "put", "call")
-            return implied_vol(rough_bergomi.price(F, K, T, r, sim, kinds), F, K, T, r, r, kinds)
+            return implied_vol(rough_bergomi.price(F, K, T, r, paths, kinds), F, K, T, r, r, kinds)
 
         def sabr_at(k, F=F, T=T, smile=smile):
             return sabr.implied_vol(F, F * np.exp(k), T, smile.params)
@@ -469,7 +536,7 @@ def rough_vols(chain: pd.DataFrame, sim) -> np.ndarray:
     for _, q in chain.assign(_pos=np.arange(len(chain))).groupby("expiry"):
         F, T, r = float(q["forward"].iloc[0]), float(q["T"].iloc[0]), float(q["r"].iloc[0])
         K, kinds = q["strike"].to_numpy(), q["option_type"].to_numpy()
-        model = rough_bergomi.price(F, K, T, r, sim, kinds)
+        model = rough_bergomi.price(F, K, T, r, _sim_at(sim, T), kinds)
         out[q["_pos"].to_numpy()] = implied_vol(model, F, K, T, r, r, kinds)
     return out
 

@@ -74,14 +74,23 @@ class Normals:
     dt: float
 
 
-def draw(n_paths: int, T: float, rng=None, antithetic=True, steps_per_day: int = STEPS_PER_DAY) -> Normals:
+def draw(
+    n_paths: int,
+    T: float,
+    rng=None,
+    antithetic=True,
+    steps_per_day: int = STEPS_PER_DAY,
+    days_per_year: int = 365,
+) -> Normals:
+    """Normals for paths to T on a grid of `steps_per_day` steps per day, a year being
+    `days_per_year` days: 365 for calendar time, 252 for trading time (sessions)."""
     rng = np.random.default_rng(rng)
-    n_steps = int(round(T * 365 * steps_per_day))
+    n_steps = int(round(T * days_per_year * steps_per_day))
     half = n_paths // 2 if antithetic else n_paths
     z = rng.standard_normal((3, half, n_steps))
     if antithetic:
         z = np.concatenate([z, -z], axis=1)
-    return Normals(z[0], z[1], z[2], 1.0 / (365 * steps_per_day))
+    return Normals(z[0], z[1], z[2], 1.0 / (days_per_year * steps_per_day))
 
 
 def _kernel_weights(a: float, n_steps: int, dt: float) -> np.ndarray:

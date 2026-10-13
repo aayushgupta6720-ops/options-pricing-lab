@@ -6,10 +6,12 @@
 
 Models:
     heston  Heston per day and SABR per day and expiry, every underlying
-    rough   rough Bergomi per day (config.ROUGH_UNDERLYINGS), with Heston refitted to the same
-            2-91 day window for a like-for-like comparison, and Heston again with one long-run
-            variance per expiry (theta(t)), as many level parameters as rough Bergomi's
-            forward-variance curve has; per-expiry skews and per-quote vols
+    rough   rough Bergomi per day (config.ROUGH_UNDERLYINGS) on a trading-day clock, once per seed
+            in calibration.ROUGH_SEEDS (the median-H fit is the day's, with the others' H
+            alongside), with Heston refitted to the same 2-91 day window for a like-for-like
+            comparison, and Heston again with one long-run variance per expiry (theta(t)), as many
+            level parameters as rough Bergomi's forward-variance curve has; per-expiry skews and
+            per-quote vols
 
 Days already fitted are skipped unless --force. Days are fitted in date order within runs, each fit
 warm-started from the previous day's (fixed starting points are tried too, and the best fit wins,
@@ -37,7 +39,7 @@ from optlab.calibration import (
     heston_vols,
     shape_rmse,
 )
-from optlab.market import store
+from optlab.market import calendar, store
 from optlab.models.heston import HestonParams
 from optlab.models.rough_bergomi import RoughBergomiParams
 
@@ -114,13 +116,15 @@ def term_columns(quotes: pd.DataFrame, heston_tt) -> tuple[dict, pd.DataFrame, n
 
 
 def rough_rows(
-    day: date, underlying: str, fit, heston, heston_tt=None
+    day: date, underlying: str, fit, heston, heston_tt=None, seed_fits=()
 ) -> tuple[dict, list[dict], list[dict]]:
     """The day's row, per-expiry rows and per-quote rows for a rough Bergomi fit, with the
-    same-window Heston fits alongside: constant theta, and theta(t)."""
+    same-window Heston fits alongside: constant theta, and theta(t). `seed_fits` are the day's fits
+    with every seed, `fit` among them; T is in trading years (sessions / 252)."""
     row = {"trade_date": day, "underlying": underlying, "fitted": fit is not None}
     if fit is None:
         return row, [], []
+    seeds = [f for f in seed_fits if f is not None] or [fit]
     quotes = fit.quotes.copy()
     quotes["heston_iv"] = heston_vols(quotes, heston.params) if heston else np.nan
     tt_row, tt_expiries, quotes["heston_tt_iv"] = term_columns(quotes, heston_tt)
@@ -130,6 +134,9 @@ def rough_rows(
         H=p.H,
         eta=p.eta,
         rho=p.rho,
+        clock="trading",
+        H_seeds=sorted(float(f.params.H) for f in seeds),
+        rmse_seeds=[float(f.rmse) for f in sorted(seeds, key=lambda f: f.params.H)],
         rmse=fit.rmse,
         shape_rmse=fit.shape_rmse,
         heston_rmse=float(np.sqrt(np.nanmean(heston_miss**2))) if heston else np.nan,
@@ -229,10 +236,42 @@ def heston_run(job) -> tuple[dict, list[str]]:
 
 
 def same_window_heston(chain: pd.DataFrame):
-    """Heston fitted to rough Bergomi's window, with constant theta and then with theta(t)."""
-    window = dict(min_days=calibration.ROUGH_MIN_DAYS, max_days=calibration.ROUGH_MAX_DAYS)
-    heston = fit_heston(chain, **window)
-    return heston, (fit_heston_term(chain, heston.params, **window) if heston else None)
+    """Heston fitted to rough Bergomi's quotes (rough_window's), with constant theta and then with
+    theta(t)."""
+    everything = dict(min_days=0, max_days=np.inf)
+    heston = fit_heston(chain, **everything)
+    return heston, (fit_heston_term(chain, heston.params, **everything) if heston else None)
+
+
+def rough_window(chain: pd.DataFrame, sessions) -> pd.DataFrame:
+    """The quotes rough Bergomi is fitted to: expiries ROUGH_MIN_DAYS to ROUGH_MAX_DAYS calendar
+    days out, on a trading-day clock (calibration.to_trading_time)."""
+    window = calibration.calibration_quotes(chain, calibration.ROUGH_MIN_DAYS, calibration.ROUGH_MAX_DAYS)
+    return calibration.to_trading_time(window, sessions)
+
+
+def fit_rough_seeds(chain: pd.DataFrame, previous):
+    """The median-H fit over calibration.ROUGH_SEEDS, and every seed's fit."""
+    fits = [
+        fit_rough_bergomi(
+            chain,
+            previous,
+            n_paths=calibration.ROUGH_PATHS,
+            min_days=0,
+            max_days=np.inf,
+            seed=seed,
+            days_per_year=calendar.SESSIONS_PER_YEAR,
+        )
+        for seed in calibration.ROUGH_SEEDS
+    ]
+    done = sorted((f for f in fits if f is not None), key=lambda f: f.params.H)
+    return (done[(len(done) - 1) // 2] if done else None), fits
+
+
+def trading_sessions(root: Path, underlying: str) -> list[date]:
+    """The days the underlying has a file for: its trading sessions so far."""
+    summary = store.read_summary(root)
+    return sorted(set(summary.loc[summary["underlying"] == underlying, "trade_date"]))
 
 
 def rough_run(job) -> tuple[dict, list[str]]:
@@ -245,13 +284,15 @@ def rough_run(job) -> tuple[dict, list[str]]:
         except (ValueError, KeyError):
             previous = None
     chain_for = _chains(root, underlying)
+    sessions = trading_sessions(root, underlying)
     fits, expiries, quotes, failures = [], [], [], []
     for day in days:
         chain = chain_for(day)
         try:
-            fit = fit_rough_bergomi(chain, previous, n_paths=calibration.ROUGH_PATHS) if len(chain) else None
-            heston, heston_tt = same_window_heston(chain) if fit else (None, None)
-            row, expiry_rows, quote_rows = rough_rows(day, underlying, fit, heston, heston_tt)
+            window = rough_window(chain, sessions) if len(chain) else chain
+            fit, seed_fits = fit_rough_seeds(window, previous) if len(window) else (None, [])
+            heston, heston_tt = same_window_heston(window) if fit else (None, None)
+            row, expiry_rows, quote_rows = rough_rows(day, underlying, fit, heston, heston_tt, seed_fits)
         except Exception as error:
             failures.append(f"{underlying} {day} (rough): {type(error).__name__}: {error}")
             continue

@@ -8,7 +8,7 @@ import requests
 
 from optlab import config
 from optlab.market import nse, store
-from optlab.market.chain import CHAIN_COLUMNS, build_chain
+from optlab.market.chain import CHAIN_COLUMNS, arbitrage_free, build_chain
 from optlab.market.forwards import forwards, parity_forward
 from optlab.models import black_scholes
 from optlab.surface import atm_at_tenor, atm_vol, daily_summary, expiry_metrics, smile_grid, vol_at_delta
@@ -159,6 +159,51 @@ def test_build_chain_drops_untraded_quotes():
     chain = build_chain(day, "TEST", r=0.05)
     assert chain.empty and list(chain.columns) == CHAIN_COLUMNS
     assert np.isnan(daily_summary(chain)["atm_iv_30d"])
+
+
+def _stale(day, strike, kind, close, trades):
+    """The day with one quote's close and trade count replaced."""
+    row = (day["strike"].round(6) == round(strike, 6)) & (day["option_type"] == kind)
+    assert row.sum() == 1
+    return day.assign(
+        close=np.where(row, close, day["close"]),
+        settle=np.where(row, close, day["settle"]),
+        n_trades=np.where(row, trades, day["n_trades"]),
+    )
+
+
+def test_a_stale_close_that_leaves_an_arbitrage_is_dropped():
+    # As on 13 Mar 2026: a thin put's close far below its liquid neighbour's, so the put spread
+    # between them costs more than its width.
+    day = synthetic_day(forward=20000.0, r=0.05, vol_of_strike=lambda k: 0.2 - 0.3 * k, n_trades=5000)
+    clean = build_chain(day, "TEST", r=0.05)
+    stale = build_chain(_stale(day, 19600.0, "put", 29.0, trades=30), "TEST", r=0.05)
+    assert 19600.0 in clean["strike"].round(6).to_numpy()
+    assert 19600.0 not in stale["strike"].round(6).to_numpy()
+    assert len(stale) == len(clean) - 1
+
+
+def test_an_arbitrage_drops_the_thinner_quote_and_small_ones_are_noise():
+    day = synthetic_day(forward=1000.0, r=0.05, vol_of_strike=lambda k: 0.2, n_trades=5000)
+    chain = build_chain(day, "TEST", r=0.05).assign(n_trades=5000)
+    call = (chain["option_type"] == "call") & (chain["strike"].round(6) == 1100.0)
+    # A butterfly arbitrage: the middle call dearer than its neighbours' average by more than
+    # the tolerance. Its neighbours are thinner here, but dropping one of them would leave the
+    # violation, so it's the 1100 call that goes.
+    bumped = chain.assign(close=np.where(call, chain["close"] + 3.0, chain["close"]))
+    neighbours = bumped["strike"].round(6).isin([1080.0, 1120.0])
+    keep = arbitrage_free(bumped.assign(n_trades=np.where(neighbours, 25, np.where(call, 4000, 5000))))
+    assert (~keep).sum() >= 1
+    assert all(bumped["strike"].round(6)[~keep].isin([1080.0, 1100.0, 1120.0]))
+    # Within a rupee, or 5% of the prices involved, it's a close printed a few minutes off.
+    small = chain.assign(close=np.where(call, chain["close"] + 0.4, chain["close"]))
+    assert arbitrage_free(small).all()
+    assert arbitrage_free(chain).all()
+
+
+def test_the_real_day_has_no_arbitrage_beyond_the_tolerance_left(raw):
+    chain = build_chain(raw, "NIFTY")
+    assert arbitrage_free(chain).all()
 
 
 # --- surface.py -----------------------------------------------------------------------------

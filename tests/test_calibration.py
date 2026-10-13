@@ -159,11 +159,15 @@ def test_rough_bergomi_recovers_a_rough_market():
     from optlab.models import rough_bergomi as rb
 
     truth = rb.RoughBergomiParams(H=0.12, eta=1.8, rho=-0.6)
-    market = rb.paths(rb.draw(60_000, 60 / 365, rng=99), truth, rb.ForwardVariance.flat(0.15**2))
+    xi = rb.ForwardVariance.flat(0.15**2)
+    # On the grids the fit uses: FINE_STEPS a day for the expiries within FINE_DAYS.
+    market = rb.paths(rb.draw(60_000, 60 / 365, rng=99), truth, xi)
+    fine = rb.paths(rb.draw(60_000, 7 / 365, rng=98, steps_per_day=calibration.FINE_STEPS), truth, xi)
 
     def vols(K, T):
         kind = np.where(K < F, "put", "call")
-        return implied_vol(rb.price(F, K, T, R, market, kind), F, K, T, R, R, kind)
+        paths = fine if T * 365 <= calibration.FINE_DAYS else market
+        return implied_vol(rb.price(F, K, T, R, paths, kind), F, K, T, R, R, kind)
 
     chain = synthetic_chain(dict.fromkeys((3, 7, 14, 30, 60), vols))
     fit = calibration.fit_rough_bergomi(chain, n_paths=16_000)  # different random numbers from the market's
@@ -188,3 +192,36 @@ def test_shape_error_ignores_level_offsets():
     misses = pd.Series([0.01, 0.01, 0.01, -0.02, -0.02])
     expiries = pd.Series(["a", "a", "a", "b", "b"])
     assert calibration.shape_rmse(misses, expiries) == pytest.approx(0.0, abs=1e-15)
+
+
+def test_short_expiries_get_the_fine_grid():
+    from optlab.models import rough_bergomi as rb
+
+    params, xi = rb.RoughBergomiParams(0.08, 1.9, -0.4), rb.ForwardVariance.flat(0.13**2)
+    coarse = rb.paths(rb.draw(4_000, 30 / 365, rng=1), params, xi)
+    fine = rb.paths(rb.draw(4_000, 5 / 365, rng=2, steps_per_day=calibration.FINE_STEPS), params, xi)
+    sim = calibration.RoughSimulation(coarse, fine, 5 / 365)
+    assert sim.at(2 / 365) is fine and sim.at(5 / 365) is fine and sim.at(7 / 365) is coarse
+    assert len(fine.times) - 1 == 5 * calibration.FINE_STEPS
+
+
+def test_trading_time_keeps_every_price_and_counts_sessions():
+    from datetime import date
+
+    from optlab.models import black_scholes
+
+    day = date(2026, 10, 9)  # a Friday
+    chain = synthetic_chain(dict.fromkeys((3, 10, 31), lambda K, T: np.full(len(K), 0.15)))
+    chain = chain.assign(trade_date=day, expiry=[day + pd.Timedelta(days=round(t * 365)) for t in chain["T"]])
+    sessions = [date(2026, 10, 8), day]  # known up to the Friday, weekdays after
+    traded = calibration.to_trading_time(chain, sessions)
+    assert sorted(traded["T"].unique() * 252) == pytest.approx([1, 6, 21])  # Mon 12th; Mon 19th; Mon 9 Nov
+
+    def prices(c):
+        cols = [c[k].to_numpy() for k in ("forward", "strike", "T", "r", "iv", "r", "option_type")]
+        return black_scholes.price(*cols)
+
+    np.testing.assert_allclose(prices(traded), prices(chain), rtol=1e-10)
+    # A weekend-spanning 3-day expiry has one session: its vol per session is higher.
+    first = traded["T"] == traded["T"].min()
+    assert traded.loc[first, "iv"].iloc[0] > 0.15 * 1.4
