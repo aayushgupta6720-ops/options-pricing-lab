@@ -307,7 +307,9 @@ def rough_run(job) -> tuple[dict, list[str]]:
 MODELS = {
     # name: (table that records which days are done, worker, underlyings, days per run)
     "heston": (store.HESTON_FITS, heston_run, None, 40),
-    "rough": (store.ROUGH_FITS, rough_run, "ROUGH_UNDERLYINGS", 15),
+    # Five days a run, not fifteen: a full refit's last runs went on with two of seven workers busy for
+    # the length of a fifteen-day run. A run's first day starts cold, but fixed starts are tried anyway.
+    "rough": (store.ROUGH_FITS, rough_run, "ROUGH_UNDERLYINGS", 5),
 }
 
 

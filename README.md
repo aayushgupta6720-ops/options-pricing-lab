@@ -64,7 +64,7 @@ call, on every trading day since July 2024:
 - **Heston's spot vol is the market's short-dated vol.** √v₀ has a 0.98 correlation with NIFTY's
   7-day ATM vol and 0.96 with India VIX.
 - **Stress steepens the skew.** NIFTY's spot-vol correlation ρ has a median of −0.38, falling to
-  −0.55 on the 10% of days with the highest 30-day vol; Heston's fit error also rises (0.34 → 0.59
+  −0.55 on the 10% of days with the highest 30-day vol; Heston's fit error also rises (0.35 → 0.54
   points). RELIANCE's ρ is only −0.12: single-stock smiles are flatter.
 - **The Feller condition fails almost every day** (95–100% of days): matching an index skew needs a
   vol of vol large enough for the variance to touch zero. That's usual for equity-index fits; the
@@ -72,16 +72,16 @@ call, on every trading day since July 2024:
 - **Day-to-day fits are held steady.** Unpenalised, κ jumped by a median 26% from one NIFTY day to
   the next (19% for BANKNIFTY), because κ and θ trade off along a ridge the surface barely constrains.
   Each fit now pays for moving κ, ξ and ρ away from the previous day's (v₀ and θ move freely): κ's
-  median daily move fell to 7.6% for NIFTY and 2.9% for BANKNIFTY, ξ's from 13% to 6.4%, for 0.01–0.02
+  median daily move fell to 8% for NIFTY and 3% for BANKNIFTY, ξ's from 13% to 6%, for 0.01–0.02
   vol points more fit error.
 - **Monthly-only underlyings can't pin down mean reversion.** κ sits at its cap of 30 (an 8-day
-  half-life) on 41% of RELIANCE days and 12% of BANKNIFTY days, against 1% for NIFTY with its weekly
+  half-life) on 42% of RELIANCE days and 10% of BANKNIFTY days, against 1% for NIFTY with its weekly
   expiries (57%, 18% and 3% before the day-to-day penalty). Letting it go higher lowers the error a little at the price of parameters like a
   one-day half-life.
 - **Expiries under a week need jumps.** Averaged over all NIFTY days, Heston's vols for expiries under
-  a week (left out of the fit) are 1.2–1.3 points too low in the wings and 0.3 too high at the money:
-  those smiles are steeper than any diffusion produces. Inside the fitted range the average miss in
-  any region is under 0.45 points.
+  a week (left out of the fit) are 1.1–1.3 points too low 1.5–2 standard deviations out (2.3–3.0 beyond)
+  and 0.3 too high at the money: those smiles are steeper than any diffusion produces. Inside the fitted
+  range the average miss in any region out to 2.5 standard deviations is under 0.45 points.
 - **The far wings are lottery tickets.** Beyond the 5-delta wings, options trade at a few rupees at
   vols no diffusion reaches (a one-week NIFTY put 11 standard deviations out closed at ₹0.85, an
   implied vol of 52%). In a first run that fitted them too, they caused every one of the worst NIFTY
@@ -89,28 +89,36 @@ call, on every trading day since July 2024:
 
 ### Rough volatility on NIFTY
 
-Rough Bergomi and Heston fitted each day to the same NIFTY expiries (2 to 91 days, between the 5-delta
-wings), over all 562 days:
+Rough Bergomi and Heston fitted each day to the same NIFTY expiries (2 to 91 calendar days, between the
+5-delta wings), over all 568 days. Time is counted in trading days, so a weekend isn't two days of
+variance, and rough Bergomi is fitted three times a day with different random numbers (the day's fit is
+the median-H one):
 
 - **Rough Bergomi fits the smiles better, most of all the shortest.** Its *shape error* (each expiry's
   misses after removing their average, the fair comparison since rough Bergomi fits one variance level
-  per expiry) is lower than Heston's on 89% of days: 0.28 against 0.39 vol points for expiries of a week
-  or less (better on 84% of them), 0.17–0.18 against 0.20–0.22 out to three months.
+  per expiry) is lower than Heston's on 86% of days: 0.30 against 0.42 vol points for expiries of a week
+  or less (better on 84% of them), 0.17–0.19 against 0.19–0.20 out to three months.
 - **The edge survives giving Heston a level per expiry too, but it's small.** Heston with θ(t), a long-run
   variance that steps at each expiry, has as many level parameters as rough Bergomi plus one, and keeps
-  its pricing formula. On the 566 days fitted to date it cuts Heston's median fit error from 0.35 to 0.25
-  vol points, but its shape error only from 0.25 to 0.24, against rough Bergomi's 0.20: rough Bergomi
-  still has the better shape on 80% of days. The median day's gap is 0.025 points (95% interval
-  0.022–0.028), largest under a week (0.28 against 0.38) and 0.02–0.03 points beyond. What rough Bergomi
-  adds is the shape of each short smile, by a few hundredths of a vol point.
-- **But NIFTY's skew doesn't steepen as fast as rough volatility predicts.** Across 2–91 days the
-  at-the-money skew falls with slope −0.29 in maturity (H ≈ 0.21 read through the power law), and inside
-  two weeks only −0.21, about Heston's −0.20 and well short of rough Bergomi's −0.38. Rough Bergomi's
-  edge comes from each short expiry's smile shape (curvature and wings), not from the term structure of
-  skew.
-- **The fitted roughness is low and noisy.** H has a median of 0.07 (middle half 0.03–0.19), below the
-  0.21 the skew slope implies, and moves a lot day to day. It's higher on stressed days (0.21 in the
-  most volatile tenth against 0.06 on calm ones), when both models fit worse (0.35 and 0.57 points).
+  its pricing formula. It cuts Heston's median fit error from 0.33 to 0.23 vol points, but its shape
+  error only from 0.24 to 0.23, against rough Bergomi's 0.20: rough Bergomi still has the better shape on
+  79% of days. The median day's gap is 0.020 points (95% interval 0.017–0.023), largest under a week
+  (0.30 against 0.37) and 0.01–0.02 points beyond. What rough Bergomi adds is the shape of each short
+  smile, by a few hundredths of a vol point.
+- **But NIFTY's skew doesn't steepen as fast as rough volatility predicts.** Across 1–63 trading days the
+  at-the-money skew falls with slope −0.23 in maturity (H ≈ 0.27 read through the power law), and inside
+  two weeks barely at all (−0.09), flatter than Heston's −0.20 and far from rough Bergomi's −0.36. Counted
+  in calendar days the short end had looked steeper (−0.21): part of that was weekends, since a Friday's
+  one-week expiry spans one and a Monday's doesn't. Rough Bergomi's edge comes from each short expiry's
+  smile shape (curvature and wings), not from the term structure of skew.
+- **The fitted roughness is low, and steady enough to read.** H has a median of 0.10 (middle half
+  0.03–0.21), below the 0.27 the skew slope implies. Fitted with three sets of random numbers, a day's H
+  varies by a median 0.023 (0.073 on the noisiest tenth of days), half its median move from one day to
+  the next (0.046); with one seed, four steps a day and calendar time, one day's H had ranged from 0.04
+  to 0.16 with the seed alone. It's higher on stressed days: 0.23 in the most volatile tenth against 0.06
+  in the calmer half (95% interval for the difference 0.13–0.27, resampling days), and the two groups'
+  seed ranges don't overlap (0.22–0.25 against 0.04–0.08). Both models fit worse then (0.36 and 0.61
+  points).
 - **The variance-swap replication reproduces India VIX.** The 30-day variance swap from our own strips
   has a 0.979 correlation with India VIX and sits 0.30 points below it on average (the strip stops at
   the quoted strikes).
@@ -118,14 +126,16 @@ wings), over all 562 days:
 ### Exotics
 
 - **Barriers carry model risk the vanilla market can't settle.** On 22-day NIFTY options (5 Oct 2026),
-  an up-and-out call with its barrier 4.6% above spot is worth ₹109 under Black-Scholes at the 14.1% ATM
-  vol, ₹137 under local vol and ₹157 under Heston (rough Bergomi ₹155). Local vol is built from that Heston
-  fit and prices every vanilla option the same, so the ₹20 between them comes from the dynamics alone:
-  Heston's smile moves with its random variance, local vol's is fixed. The ordering isn't fixed either: a
-  down-and-in put 4.7% below spot is ₹156, ₹210 and ₹203, and a floating lookback put ₹590, ₹582 and
-  ₹522. 5 Oct was the most extreme day: over the last 25 NIFTY fits the up-and-out call was a median 24%
-  above Black-Scholes under Heston (3% to 41%) and 15% under local vol (0% to 27%). Asians move much less
-  (3–4%).
+  an up-and-out call with its barrier 4.6% above spot (23,600) is worth ₹109 under Black-Scholes at the
+  14.1% ATM vol, ₹134 under local vol and ₹154 under Heston (rough Bergomi ₹158). Local vol is built from
+  that Heston fit and prices every vanilla option the same, so the ₹20 between them comes from the
+  dynamics alone: Heston's smile moves with its random variance, local vol's is fixed. The ordering isn't
+  fixed either: a down-and-in put 4.7% below spot (21,500) is ₹159, ₹213 and ₹206, and a floating
+  lookback put ₹593, ₹587 and ₹529. Over the 25 NIFTY fits from 9 Sep to 13 Oct, with the barrier 4.6%
+  above each day's spot, the up-and-out call was a median 28% above Black-Scholes under Heston (0% to 55%,
+  on 8 Oct) and 18% under local vol (0% to 33%). An arithmetic Asian call stays within 7% of
+  Black-Scholes (median about 1%). Rough Bergomi's fit is on a trading-day clock; the exotics use it in
+  calendar days, so its weekends carry an average day's variance.
 - **Variance reduction depends on the option, and for Sobol on the path count.** For an arithmetic
   Asian under Black-Scholes, a geometric-Asian control variate cuts the variance per path by a factor
   that holds at any number of paths but swings with the option: about 1,300× for a 1-year
@@ -166,10 +176,13 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
   night (as it did on 9 Oct 2026) can't fail them.
 - **`scripts/calibrate.py`** fits Heston and SABR (every underlying) and rough Bergomi (NIFTY, by
   Monte Carlo) to every day that doesn't have a fit yet, warm-starting each from the previous day's.
-  A new day takes about 15 seconds; the whole history about two minutes for Heston and SABR and under
-  70 minutes for rough Bergomi on 8 cores.
+  A new day takes about a minute (rough Bergomi is fitted three times); the whole history about two
+  minutes for Heston and SABR and about 3½ hours for rough Bergomi on 7 cores.
 - **`scripts/rebuild_summary.py`** recomputes the daily summary from the stored quotes after a
   change to how it's derived, without downloading anything.
+- **`scripts/reclean_chains.py`** applies a new quote filter (the stale-close check) to the stored
+  chains, so a change to the filters doesn't need the history downloaded again; run the summary
+  rebuild and `calibrate --force` after it.
 - **`.github/workflows/ingest.yml`** runs ingest and calibration every weekday evening and commits to the
   `market-data` branch. The app reads its end-of-day data from that branch. It's scheduled at 20:17 IST
   and again at 22:17, 00:17, 02:17 and 08:17, because GitHub's scheduled runs can start hours late or
@@ -259,6 +272,12 @@ git worktree add data market-data
   last close's smile by the index's historical spot-vol slope rather than re-reading it intraday.
 - **Liquidity filter.** Quotes need 20+ trades and a price of at least ₹0.50, so far wings and
   long-dated expiries are thin. NIFTY lists options out to 2031 but only the first year or so trades.
+- **Stale closes.** A thin strike's close can be hours old: on 13 Mar 2026 NIFTY's 24 Mar 22300 put
+  closed at ₹29 (30 trades) and the 22400 at ₹170 (17,637 trades), so the 100-point put spread cost
+  ₹141. A quote that leaves a vertical-spread or butterfly arbitrage worth more than ₹1 or 5% of the
+  prices involved (whichever is larger) is dropped, the less-traded quote of the worst violation first,
+  until none is left. That's 1.5% of quotes; at ₹1 alone it would be 11%, since closes printed minutes
+  apart differ by a rupee or two on options worth hundreds.
 - **Rate.** A single 5.5% rate (the 91-day T-bill in September 2026) is used throughout. Forwards come
   from put-call parity, so the rate only affects discounting, which moves a 30-day vol by well
   under 1% of its value even across 2024's higher rates.

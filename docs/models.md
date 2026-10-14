@@ -70,6 +70,10 @@ below 1e-10 for any quote worth at least the ₹0.05 tick.
 3. **Clean.** Keep out-of-the-money quotes (puts below the forward, calls above): they're the liquid
    side and their price is all time value. Require 20+ trades, a price of at least ₹0.50 (ten ticks),
    2+ days to expiry, and $|\ln(K/F)| \le 0.4$.
+   Then drop stale closes: while some strike's close leaves a vertical-spread or butterfly arbitrage
+   (call prices, puts converted by parity, must fall with the strike, no faster than the discount
+   factor, and be convex) worth more than ₹1 or 5% of the quoted prices involved, the less-traded quote
+   of the worst violation goes. That removes 1.5% of quotes.
 4. **Invert Black-76** ($C = D[F N(d_1) - K N(d_2)]$), which is Black-Scholes with $S = F$, $q = r$.
    NSE options are European, so this is exact rather than an approximation.
 5. **Summarise.** ATM vol per expiry by interpolating at $\ln(K/F) = 0$, but only when the quotes
@@ -180,7 +184,9 @@ paths are rougher than Brownian motion's, and the at-the-money skew behaves like
 $T \to 0$; a Markovian model like Heston has a skew that levels off instead.
 
 **Simulation.** The hybrid scheme with $\kappa = 1$ (Bennedsen, Lunde and Pakkanen, 2017; as in
-McCrickerd and Pakkanen, 2018): on a grid of 6-hour steps, the integral over the most recent step is
+McCrickerd and Pakkanen, 2018): on a grid of four steps a trading day (sixteen for expiries within ten
+trading days, on a second, short grid: four understated a 2-day expiry's ATM skew by about a tenth
+against a 32-step grid), the integral over the most recent step is
 drawn exactly, jointly with that step's Brownian increment (a 2×2 covariance, factored by hand
 because it's singular at $H = 1/2$); the rest is a Riemann sum with the kernel evaluated at the
 optimal points $b_k = \big(\frac{k^{a+1} - (k-1)^{a+1}}{a+1}\big)^{1/a}$, $a = H - 1/2$, done for every
@@ -199,7 +205,19 @@ expiries, started from the ATM term structure), by least squares on vega-weighte
 Every evaluation uses the same 20,000 antithetic paths (the same random numbers on every day too),
 so the objective is smooth and a small parameter change moves prices far less than Monte Carlo noise
 would. The Volterra process is cached while $H$ is unchanged and the variance factor while $H$ and
-$\eta$ are, so most of the optimiser's finite-difference steps skip the FFT. About 10 s a day.
+$\eta$ are, so most of the optimiser's finite-difference steps skip the FFT.
+
+Time is counted in trading days (`calibration.to_trading_time`, `market/calendar.py`): each expiry's
+$T$ is its NSE sessions over 252, and its implied vol and rate are rescaled so total variance and
+discounting, and so every price, are unchanged. In calendar days a weekend counts as two days of
+variance it doesn't have: NIFTY's 7-day ATM vol averaged 0.950 of its 30-day vol on Fridays and 1.025
+on Mondays. Sessions up to the last day in the data are the days that have a file; after it,
+weekdays.
+
+The quotes barely pin $H$ down: $H$, $\eta$ and the variance levels trade off, so with one set of
+random numbers a day's $H$ moved with the seed alone (0.04 to 0.16 on 8 Oct 2026). Each day is now
+fitted with three seeds and the median-$H$ fit kept, the others' $H$ stored beside it: across the
+history the three differ by a median 0.023. About 40 s a day for the three.
 
 Why fit $\xi_0$ rather than take it from variance swaps: the replicated variance swaps were too noisy
 expiry by expiry. A one-week strip includes the lottery-ticket wings (9.7% against 7.6% at the money

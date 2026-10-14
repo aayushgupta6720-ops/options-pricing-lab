@@ -224,9 +224,10 @@ with c2:
     st.plotly_chart(fig, width="stretch")
 
 st.caption(
-    f"The shaded band is the range of H over the day's {len(ROUGH_SEEDS)} fits with different random numbers. "
-    "The quotes barely pin H down: H, vol of vol and the variance levels trade off against each other, so the "
-    "Monte Carlo noise moves it. The level it hovers around is the steadier reading."
+    f"The shaded band is the range of H over the day's {len(ROUGH_SEEDS)} fits with different random numbers. It's "
+    "mostly narrow (a median 0.02, half the typical day-to-day move), so the swings are the market's rather than "
+    "Monte Carlo noise; zoom in to see it. H, vol of vol and the variance levels still trade off against each other, "
+    "so the level H hovers around is the steadier reading."
 )
 
 with st.expander("How this is computed"):
