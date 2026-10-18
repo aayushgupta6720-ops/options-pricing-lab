@@ -153,6 +153,30 @@ def rough_quotes(underlying: str, day: date) -> pd.DataFrame:
     return table[(table["underlying"] == underlying) & (table["trade_date"] == day)].reset_index(drop=True)
 
 
+def _h_from_slope(rows: pd.DataFrame) -> float:
+    rows = rows.dropna(subset=["skew_market"])
+    if len(rows) < 3:
+        return np.nan
+    return 0.5 + np.polyfit(np.log(rows["T"]), np.log(rows["skew_market"].abs()), 1)[0]
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False, max_entries=8)
+def _skew_slope_h(underlying: str, version: str) -> pd.Series:
+    expiries = rough_expiries(underlying)
+    if expiries.empty:
+        return pd.Series(dtype=float)
+    slope_h = expiries.groupby("trade_date").apply(_h_from_slope, include_groups=False).sort_index()
+    # A single day's slope is noisy (one near-symmetric smile can flip it), so take a 20-day rolling median.
+    return slope_h.rolling(20, min_periods=5).median()
+
+
+def skew_slope_h(underlying: str = "NIFTY") -> pd.Series:
+    """Roughness H implied by each day's market ATM skew slope across expiries (skew ~ T^(H - 1/2)), as a
+    20-day rolling median by trade date. Cached because it's a fit for every day of history: ~0.3 s a visit
+    on a laptop, several seconds on Render's free instance."""
+    return _skew_slope_h(underlying, version())
+
+
 def rows_for(underlying: str) -> pd.DataFrame:
     """The summary rows for one underlying on days it traded, oldest first."""
     s = summary()

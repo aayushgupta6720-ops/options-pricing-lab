@@ -170,16 +170,7 @@ history = (
 )
 
 
-def implied_by_slope(rows: pd.DataFrame) -> float:
-    rows = rows.dropna(subset=["skew_market"])
-    if len(rows) < 3:
-        return np.nan
-    return 0.5 + np.polyfit(np.log(rows["T"]), np.log(rows["skew_market"].abs()), 1)[0]
-
-
-slope_h = expiries.groupby("trade_date").apply(implied_by_slope, include_groups=False).sort_index()
-# A single day's slope is noisy (one near-symmetric smile can flip it); show a 20-day rolling median.
-slope_h = slope_h.rolling(20, min_periods=5).median()
+slope_h = data.skew_slope_h("NIFTY")
 history = history.assign(slope_h=history["trade_date"].map(slope_h))
 hx = pd.to_datetime(history["trade_date"])
 c1, c2 = st.columns(2)
