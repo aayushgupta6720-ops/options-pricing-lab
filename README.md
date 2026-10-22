@@ -5,12 +5,11 @@ volatility surface for NIFTY, BANKNIFTY and RELIANCE, rebuilt from NSE's officia
 with a history back to July 2024.
 
 **Live demo:** https://options-pricing-lab.onrender.com. It runs on Render's free plan, which gives it
-0.15 of a CPU and puts it to sleep after 15 minutes idle. On weekdays from 09:00 to 18:00 IST a ping
-every 10 minutes keeps it awake and loaded: a page shows its first chart in about 9–13 s on a first
-visit, much of that the browser downloading Streamlit's scripts, and in about 4–7 s after that. At
-other times the first visit has to wake it and load the app, which takes about 1½ minutes. The option
-data updates every weekday evening; the Option pricer and Strategy builder use the live index level
-during market hours.
+0.15 of a CPU and puts it to sleep after 15 minutes idle, so the first visit after a quiet spell has
+to wake it and load the app, which takes about 1½ minutes. While it's awake, a page shows its first
+chart in about 9–13 s on a first visit, much of that the browser downloading Streamlit's scripts, and
+in about 4–7 s after that. The option data updates every weekday evening; the Option pricer and
+Strategy builder use the live index level during market hours.
 
 ![Implied volatility page](docs/screenshots/surface.png)
 
@@ -201,12 +200,6 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
   close's smile at the same moneyness, moved by how at-the-money vol has moved with the index over the
   last year (`optlab.surface.spot_vol_slope`: about −1.15 vol points per +1% for NIFTY's 30-day vol), so
   a falling day prices options dearer; the Option pricer and Strategy builder say by how much.
-- **Hosting:** Render's free plan gives the app 0.15 of a CPU and stops it after 15 idle minutes. A
-  cron-job.org job calls `/_stcore/script-health-check` every 10 minutes on weekdays from 09:00 to
-  18:00 IST. `.streamlit/config.toml` turns that endpoint on; it runs the landing page, so the
-  libraries and the data are loaded before a visitor arrives. On a freshly started server the first
-  visitor used to wait for that load, about 96 s to the first chart; after a ping it's about 13 s.
-  The window is limited because Render's 750 free hours a month are shared by all my services.
 - The maths, and what each piece is checked against, is in [docs/models.md](docs/models.md).
 
 ## Testing
