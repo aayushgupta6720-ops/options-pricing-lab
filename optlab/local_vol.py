@@ -120,7 +120,7 @@ def _kernel():
 
     bridge_update = _kernels()["bridge_update"]
 
-    @numba.njit(cache=True)
+    @numba.njit(cache=True, nogil=True)
     def local_vol_at(times, ys, vols, t, y):
         nt, ny = times.size, ys.size
         t = min(max(t, times[0]), times[nt - 1])
@@ -133,7 +133,7 @@ def _kernel():
             (1 - b) * vols[i + 1, j] + b * vols[i + 1, j + 1]
         )
 
-    @numba.njit(cache=True)
+    @numba.njit(cache=True, nogil=True)
     def paths(n_paths, n_fixings, substeps, x_start, carry, dt, times, ys, vols, b, down, has_barrier, seed):
         np.random.seed(seed)
         out = np.empty((6, n_paths))

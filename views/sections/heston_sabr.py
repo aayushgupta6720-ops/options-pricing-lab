@@ -204,41 +204,47 @@ with st.expander("Data: fit errors by expiry, SABR parameters, every quote"):
     )
 
 # --- How the fitted parameters moved --------------------------------------------------------
-st.subheader("Parameters over time")
 RANGES = {"6 months": 182, "1 year": 365, "All": None}
-span = st.segmented_control("Range", list(RANGES), default="All", required=True, key="models_range")
-history = (
-    fits
-    if RANGES[span] is None
-    else fits[fits["trade_date"] >= fits["trade_date"].max() - timedelta(days=RANGES[span])]
-)
-x = pd.to_datetime(history["trade_date"])
 
 
-def chart(series: dict, y_title: str, percent=False, fmt=None):
-    fig = charts.lines(x, series, pal, y_title=y_title, percent_y=percent, height=280, hover_format=fmt)
-    fig.add_vline(x=pd.Timestamp(day), line=dict(color=pal.muted, width=1))
-    st.plotly_chart(fig, width="stretch")
-
-
-c1, c2 = st.columns(2)
-with c1:
-    chart(
-        {"Current vol": np.sqrt(history["v0"]), "Long-run vol": np.sqrt(history["theta"])},
-        "Volatility",
-        True,
+@st.fragment
+def parameters_over_time(fits: pd.DataFrame, day, pal) -> None:
+    """A fragment, so changing the range redraws these charts and not the fits and smiles above them."""
+    st.subheader("Parameters over time")
+    span = st.segmented_control("Range", list(RANGES), default="All", required=True, key="models_range")
+    history = (
+        fits
+        if RANGES[span] is None
+        else fits[fits["trade_date"] >= fits["trade_date"].max() - timedelta(days=RANGES[span])]
     )
-    chart({"Vol of vol": history["xi"]}, "Vol of vol", fmt=".2f")
-    chart({"Fit error": history["rmse"]}, "Fit error (vol)", True)
-with c2:
-    chart({"Spot-vol correlation": history["rho"]}, "Spot-vol correlation", fmt="+.2f")
-    chart({"Mean reversion": history["kappa"]}, "Mean reversion", fmt=".2f")
-    chart({"Feller ratio": history["feller_ratio"]}, "Feller ratio", fmt=".2f")
-st.caption(
-    "One fit per trading day, each starting from the previous day's. Current vol tracks the market. Mean-reversion "
-    "speed, long-run vol and vol of vol trade off against each other (several combinations fit a surface almost "
-    "equally well), so they're noisier."
-)
+    x = pd.to_datetime(history["trade_date"])
+
+    def chart(series: dict, y_title: str, percent=False, fmt=None):
+        fig = charts.lines(x, series, pal, y_title=y_title, percent_y=percent, height=280, hover_format=fmt)
+        fig.add_vline(x=pd.Timestamp(day), line=dict(color=pal.muted, width=1))
+        st.plotly_chart(fig, width="stretch")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        chart(
+            {"Current vol": np.sqrt(history["v0"]), "Long-run vol": np.sqrt(history["theta"])},
+            "Volatility",
+            True,
+        )
+        chart({"Vol of vol": history["xi"]}, "Vol of vol", fmt=".2f")
+        chart({"Fit error": history["rmse"]}, "Fit error (vol)", True)
+    with c2:
+        chart({"Spot-vol correlation": history["rho"]}, "Spot-vol correlation", fmt="+.2f")
+        chart({"Mean reversion": history["kappa"]}, "Mean reversion", fmt=".2f")
+        chart({"Feller ratio": history["feller_ratio"]}, "Feller ratio", fmt=".2f")
+    st.caption(
+        "One fit per trading day, each starting from the previous day's. Current vol tracks the market. Mean-reversion "
+        "speed, long-run vol and vol of vol trade off against each other (several combinations fit a surface almost "
+        "equally well), so they're noisier."
+    )
+
+
+parameters_over_time(fits, day, pal)
 
 with st.expander("How this is computed"):
     st.markdown(

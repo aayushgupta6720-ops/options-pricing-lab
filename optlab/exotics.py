@@ -181,12 +181,16 @@ _KERNELS: dict = {}
 
 
 def _kernels():
-    """Compile on first use, so pages that never price an exotic never import numba."""
+    """Compile on first use, so pages that never price an exotic never import numba.
+
+    nogil=True lets other visitors' pages, and the health check, run while a simulation does. Numba keeps a
+    random generator per thread and each kernel seeds its own, so a price doesn't depend on what else runs.
+    """
     if _KERNELS:
         return _KERNELS
     numba = _numba()
 
-    @numba.njit(cache=True)
+    @numba.njit(cache=True, nogil=True)
     def bridge_update(x0, x1, w, b, down, has_barrier, lo, hi, survive):
         jump = (x1 - x0) ** 2
         low = 0.5 * (x0 + x1 - np.sqrt(jump - 2 * w * np.log(np.random.random())))
@@ -199,7 +203,7 @@ def _kernels():
             survive *= 1 - np.exp(-2 * g0 * g1 / w) if (g0 > 0 and g1 > 0) else 0.0
         return lo, hi, survive
 
-    @numba.njit(cache=True)
+    @numba.njit(cache=True, nogil=True)
     def gbm(n_paths, n_fixings, x_start, drift, sigma, dt, b, down, has_barrier, seed):
         np.random.seed(seed)
         out = np.empty((6, n_paths))
@@ -216,7 +220,7 @@ def _kernels():
             out[3, p], out[4, p], out[5, p] = np.exp(lo), np.exp(hi), survive
         return out
 
-    @numba.njit(cache=True)
+    @numba.njit(cache=True, nogil=True)
     def heston(
         n_paths,
         n_fixings,

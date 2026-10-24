@@ -160,66 +160,78 @@ st.caption(
     "Bergomi can, yet improves Heston's shape only a little: what's left is the smile's shape itself."
 )
 
-st.subheader("Fitted roughness over time")
 RANGES = {"6 months": 182, "1 year": 365, "All": None}
-span = st.segmented_control("Range", list(RANGES), default="All", required=True, key="rough_range")
-history = (
-    fits
-    if RANGES[span] is None
-    else fits[fits["trade_date"] >= fits["trade_date"].max() - timedelta(days=RANGES[span])]
-)
 
 
-slope_h = data.skew_slope_h("NIFTY")
-history = history.assign(slope_h=history["trade_date"].map(slope_h))
-hx = pd.to_datetime(history["trade_date"])
-c1, c2 = st.columns(2)
-with c1:
-    fig = charts.lines(
-        hx,
-        {
-            "From the market's skew slope (20-day median)": history["slope_h"],
-            "Fitted by rough Bergomi": history["H"],
-        },
-        pal,
-        y_title="H",
-        hover_format=".2f",
-        height=300,
-        slots=[charts.MODEL_SLOTS["Market"], charts.MODEL_SLOTS["Rough Bergomi"]],
+@st.fragment
+def roughness_over_time(fits: pd.DataFrame, day, pal) -> None:
+    """A fragment, so changing the range redraws these charts and not the fits above them."""
+    st.subheader("Fitted roughness over time")
+    span = st.segmented_control("Range", list(RANGES), default="All", required=True, key="rough_range")
+    history = (
+        fits
+        if RANGES[span] is None
+        else fits[fits["trade_date"] >= fits["trade_date"].max() - timedelta(days=RANGES[span])]
     )
-    if "H_seeds" in history:
-        seeds = history["H_seeds"].map(
-            lambda v: list(v) if isinstance(v, (list, np.ndarray)) and len(v) else None
-        )
-        has = seeds.notna()
-        if has.any():
-            colour = pal.series[charts.MODEL_SLOTS["Rough Bergomi"]]
-            band = dict(mode="lines", line=dict(width=0), hoverinfo="skip", showlegend=False)
-            fig.add_trace(go.Scatter(x=hx[has], y=seeds[has].map(max), **band))
-            fig.add_trace(
-                go.Scatter(
-                    x=hx[has], y=seeds[has].map(min), fill="tonexty", fillcolor=colour, opacity=0.2, **band
-                )
-            )
-    fig.add_vline(x=pd.Timestamp(day), line=dict(color=pal.muted, width=1))
-    st.plotly_chart(fig, width="stretch")
-with c2:
-    errors = {"Rough Bergomi": history["rmse"], "Heston": history["heston_rmse"]}
-    if "heston_tt_rmse" in history and history["heston_tt_rmse"].notna().any():
-        errors["Heston θ(t)"] = history["heston_tt_rmse"]
-    fig = charts.lines(
-        hx, errors, pal, y_title="Fit error (vol)", percent_y=True, height=300,
-        slots=[charts.MODEL_SLOTS[name] for name in errors],
-    )  # fmt: skip
-    fig.add_vline(x=pd.Timestamp(day), line=dict(color=pal.muted, width=1))
-    st.plotly_chart(fig, width="stretch")
 
-st.caption(
-    f"The shaded band is the range of H over the day's {len(ROUGH_SEEDS)} fits with different random numbers. It's "
-    "mostly narrow (a median 0.02, half the typical day-to-day move), so the swings are the market's rather than "
-    "Monte Carlo noise; zoom in to see it. H, vol of vol and the variance levels still trade off against each other, "
-    "so the level H hovers around is the steadier reading."
-)
+    slope_h = data.skew_slope_h("NIFTY")
+    history = history.assign(slope_h=history["trade_date"].map(slope_h))
+    hx = pd.to_datetime(history["trade_date"])
+    c1, c2 = st.columns(2)
+    with c1:
+        fig = charts.lines(
+            hx,
+            {
+                "From the market's skew slope (20-day median)": history["slope_h"],
+                "Fitted by rough Bergomi": history["H"],
+            },
+            pal,
+            y_title="H",
+            hover_format=".2f",
+            height=300,
+            slots=[charts.MODEL_SLOTS["Market"], charts.MODEL_SLOTS["Rough Bergomi"]],
+        )
+        if "H_seeds" in history:
+            seeds = history["H_seeds"].map(
+                lambda v: list(v) if isinstance(v, (list, np.ndarray)) and len(v) else None
+            )
+            has = seeds.notna()
+            if has.any():
+                colour = pal.series[charts.MODEL_SLOTS["Rough Bergomi"]]
+                band = dict(mode="lines", line=dict(width=0), hoverinfo="skip", showlegend=False)
+                fig.add_trace(go.Scatter(x=hx[has], y=seeds[has].map(max), **band))
+                fig.add_trace(
+                    go.Scatter(
+                        x=hx[has],
+                        y=seeds[has].map(min),
+                        fill="tonexty",
+                        fillcolor=colour,
+                        opacity=0.2,
+                        **band,
+                    )
+                )
+        fig.add_vline(x=pd.Timestamp(day), line=dict(color=pal.muted, width=1))
+        st.plotly_chart(fig, width="stretch")
+    with c2:
+        errors = {"Rough Bergomi": history["rmse"], "Heston": history["heston_rmse"]}
+        if "heston_tt_rmse" in history and history["heston_tt_rmse"].notna().any():
+            errors["Heston θ(t)"] = history["heston_tt_rmse"]
+        fig = charts.lines(
+            hx, errors, pal, y_title="Fit error (vol)", percent_y=True, height=300,
+            slots=[charts.MODEL_SLOTS[name] for name in errors],
+        )  # fmt: skip
+        fig.add_vline(x=pd.Timestamp(day), line=dict(color=pal.muted, width=1))
+        st.plotly_chart(fig, width="stretch")
+
+    st.caption(
+        f"The shaded band is the range of H over the day's {len(ROUGH_SEEDS)} fits with different random numbers. It's "
+        "mostly narrow (a median 0.02, half the typical day-to-day move), so the swings are the market's rather than "
+        "Monte Carlo noise; zoom in to see it. H, vol of vol and the variance levels still trade off against each other, "
+        "so the level H hovers around is the steadier reading."
+    )
+
+
+roughness_over_time(fits, day, pal)
 
 with st.expander("How this is computed"):
     st.markdown(

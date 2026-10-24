@@ -15,6 +15,7 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+from optlab import exotics
 from optlab.market import live, nse, store
 from scripts import calibrate
 from scripts.ingest import process_day
@@ -300,6 +301,19 @@ def test_exotics_page_prices_under_all_four_models():
     assert [t["name"] for t in errors["data"]] == list(reductions.index)
     for trace in errors["data"]:
         assert len(trace["x"]) == 3 and trace["y"] == sorted(trace["y"], reverse=True), trace["name"]
+
+
+def test_a_rerun_reuses_the_exotic_prices(monkeypatch):
+    """The loaded option's inputs are plain floats. A numpy float came back from its number input as a float
+    on the next run, so the first click after loading the page priced every model again."""
+    calls = []
+    real = exotics.stats_heston_numba
+    monkeypatch.setattr(exotics, "stats_heston_numba", lambda *a, **k: calls.append(1) or real(*a, **k))
+    app = open_page(EXOTICS)
+    first = len(calls)
+    app.run()
+    assert not app.exception and first > 0 and len(calls) == first
+    assert all(type(app.session_state[k]) is float for k in ("in_sigma", "in_r", "in_q"))
 
 
 def test_exotics_page_barrier_controls():

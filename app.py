@@ -38,13 +38,15 @@ for key in KEEP_ALIVE:
 
 
 def load_inputs(values: dict):
+    # Plain floats: a numpy float here comes back from its number input as a float on the next run, and
+    # the cached exotic prices, keyed on these values, would then all be computed a second time.
     inputs = {
         "in_S": float(values["S"]),
         "in_K": float(values["K"]),
         "in_days": int(values["days"]),
-        "in_sigma": round(100 * values["sigma"], 2),
-        "in_r": round(100 * values["r"], 2),
-        "in_q": round(100 * values["q"], 2),
+        "in_sigma": round(100 * float(values["sigma"]), 2),
+        "in_r": round(100 * float(values["r"]), 2),
+        "in_q": round(100 * float(values["q"]), 2),
         "in_kind": values["kind"],
     }
     st.session_state.update(inputs)
