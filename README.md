@@ -4,19 +4,19 @@ Option pricing models built and tested from scratch, applied to real NSE data: a
 volatility surface for NIFTY, BANKNIFTY and RELIANCE, rebuilt from NSE's official end-of-day files
 with a history back to July 2024.
 
-**Live demo:** https://options-pricing-lab.onrender.com. It runs on Render's free plan, which gives it
-0.15 of a CPU and puts it to sleep after 15 minutes idle, so the first visit after a quiet spell has
-to wake it and load the app, which takes about 1½ minutes. While it's awake, a page shows its first
-chart in about 9–13 s on a first visit, much of that the browser downloading Streamlit's scripts, and
-in about 4–7 s after that. The option data updates every weekday evening; the Option pricer and
-Strategy builder use the live index level during market hours.
+**Live demo:** https://options-pricing-volatility-lab.streamlit.app. It runs on Streamlit Community
+Cloud's free tier, which puts it to sleep after 12 hours without visitors; the first visitor after that
+gets a button to wake it. While it's awake, a page shows its first chart in about 12 s on a first visit,
+much of that the browser downloading Streamlit's scripts, and in about 4 s after that. The option data
+updates every weekday evening; the Option pricer and Strategy builder use the live index level during
+market hours.
 
 ![Implied volatility page](docs/screenshots/surface.png)
 
 ## What's in it
 
 Five pages; the bigger ones are split into tabs, and only the open tab is computed. Each tab has its
-own link, e.g. [/pricer?tab=Convergence](https://options-pricing-lab.onrender.com/pricer?tab=Convergence).
+own link, e.g. [/pricer?tab=Convergence](https://options-pricing-volatility-lab.streamlit.app/pricer?tab=Convergence).
 
 | Page | What it shows |
 |---|---|
@@ -164,7 +164,7 @@ NSE bhavcopy (daily zip) ──► optlab/market/nse.py      parse options + fut
                                                        Bergomi per day (NIFTY) → models/
                                      │
                GitHub Actions, weekday evenings        ▼
-                                              Streamlit app (Render)
+                                              Streamlit app (Community Cloud)
 ```
 
 - **`optlab/`** is a plain Python library with no Streamlit in it: the pricing models

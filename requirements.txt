@@ -1,4 +1,4 @@
-# Runtime (what Render installs)
+# Runtime (what the deployed app installs)
 numpy==2.5.3
 scipy==1.18.1
 pandas==3.0.6

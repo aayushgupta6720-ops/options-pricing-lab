@@ -1,7 +1,7 @@
 """Where the app gets market data: a local dataset if there is one, else the market-data branch.
 
 Locally, `data/` is a worktree of the market-data branch; when it holds a summary, it's the only
-source (a file missing there is missing, not fetched from GitHub). On Render there's no such
+source (a file missing there is missing, not fetched from GitHub). On a server there's no such
 folder, so files come from GitHub's raw file host. Both locations can be overridden with
 MARKET_DATA_DIR / MARKET_DATA_URL.
 
